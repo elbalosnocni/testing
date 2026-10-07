@@ -1,9 +1,7 @@
 Option Explicit
 
-Private Const PAYROLL_SYNC_VERSION As String = "2.3-HEADER-MAPPING-ROBUST"
-
 Private Const API_URL As String = _
-    "https://script.google.com/macros/s/AKfycbzenFqwhLeihHWWp00noO5EK3g_buYizFpnOaNVqiVO2EdhtI_KO-RzEkSUahMst0Vapw/exec"
+    "https://script.google.com/macros/s/AKfycbzCHDkrlhr4ZBzZUXGQe4P6RImV4YEe-IicO2W6PHWc0Fcmm9yblZ3GyCEa78KyCyf8/exec"
 
 Private Const SYNC_API_KEY As String = _
     "TRUONGCONGVU_SALARYSLIP_1988_Elbalosnocni"
@@ -18,6 +16,12 @@ Private Const MAX_RETRY As Long = 3
 Private Const WAIT_SECONDS As Long = 5
 
 Private Const SHEET_START_ROW As Long = 7
+
+Private Const DSCNV_NAME_COL As Long = 2
+Private Const DSCNV_CITIZEN_COL As Long = 8
+Private Const DSCNV_DEPARTMENT_COL As Long = 32
+Private Const DSCNV_SECTION_COL As Long = 33
+Private Const DSCNV_POSITION_COL As Long = 34
 
 Public Sub RunPayrollSync()
 
@@ -220,14 +224,10 @@ Private Function ReadPayrollWorkbook_( _
     Dim wb As Workbook
     Dim wsSalary As Worksheet
     Dim wsDSCNV As Worksheet
-
     Dim dscnvMap As Object
-    Dim salaryMap As Object
-    Dim extraHeaders As Object
-
+    Dim cols As Object
     Dim lastSalaryRow As Long
     Dim rowIndex As Long
-
     Dim employeeName As String
     Dim normalizedName As String
     Dim employeeCode As String
@@ -235,90 +235,46 @@ Private Function ReadPayrollWorkbook_( _
     Dim department As String
     Dim section As String
     Dim position As String
-
     Dim record As Object
 
     On Error GoTo ErrorHandler
-
     Set result = New Collection
 
-    LogMessage "[" & factoryName & "] Dang mo file: " & filePath
-
-    Set wb = Workbooks.Open( _
-        fileName:=filePath, _
-        password:=FILE_PASSWORD, _
-        ReadOnly:=True, _
-        UpdateLinks:=False, _
-        AddToMru:=False)
+    LogMessage "[" & factoryName & "] Mo file: " & filePath
+    Set wb = Workbooks.Open(fileName:=filePath, password:=FILE_PASSWORD, _
+                            ReadOnly:=True, UpdateLinks:=False, AddToMru:=False)
 
     On Error Resume Next
     Set wsSalary = wb.Worksheets("Salary")
     Set wsDSCNV = wb.Worksheets("DSCNV")
     On Error GoTo ErrorHandler
 
-    If wsSalary Is Nothing Then
-        Err.Raise vbObjectError + 2001, "ReadPayrollWorkbook_", _
-                  "Khong tim thay sheet Salary."
-    End If
+    If wsSalary Is Nothing Then Err.Raise vbObjectError + 2001, "ReadPayrollWorkbook_", "Khong tim thay sheet Salary."
+    If wsDSCNV Is Nothing Then Err.Raise vbObjectError + 2002, "ReadPayrollWorkbook_", "Khong tim thay sheet DSCNV."
 
-    If wsDSCNV Is Nothing Then
-        Err.Raise vbObjectError + 2002, "ReadPayrollWorkbook_", _
-                  "Khong tim thay sheet DSCNV."
-    End If
-
-    LogMessage "[" & factoryName & "] Dang nhan dien Header sheet Salary..."
-    Set salaryMap = BuildSalaryHeaderMap_(wsSalary)
-
-    LogMessage "[" & factoryName & "] Dang nhan dien Header sheet DSCNV..."
+    Set cols = BuildSalaryHeaderMap_(wsSalary)
     Set dscnvMap = BuildDSCNVMap_(wsDSCNV)
+    lastSalaryRow = LastUsedRow_(wsSalary, CLng(cols("fullName")))
 
-    lastSalaryRow = FindPayrollDataLastRow_(wsSalary, salaryMap("fullName"))
-
-    LogMessage "[" & factoryName & "] Salary data last row: " & CStr(lastSalaryRow)
-
-    Set extraHeaders = CollectExtraHeaders_(wsSalary, salaryMap)
+    LogMessage "[" & factoryName & "] Header Mapping OK. Salary last row: " & CStr(lastSalaryRow)
 
     For rowIndex = SHEET_START_ROW To lastSalaryRow
-
-        employeeName = CellText_(wsSalary.Cells(rowIndex, salaryMap("fullName")))
-        employeeCode = CellText_(wsSalary.Cells(rowIndex, salaryMap("employeeCode")))
-
-        If Len(employeeName) = 0 Or Len(employeeCode) = 0 Then GoTo ContinueSalaryRow
-        If IsSummaryRow_(employeeName, employeeCode) Then GoTo ContinueSalaryRow
+        employeeName = CellText_(wsSalary.Cells(rowIndex, CLng(cols("fullName"))))
+        If Len(employeeName) = 0 Then GoTo ContinueSalaryRow
 
         normalizedName = NormalizeName_(employeeName)
+        employeeCode = CellText_(wsSalary.Cells(rowIndex, CLng(cols("employeeCode"))))
 
-        Dim dscnvItem As Object
-        Set dscnvItem = Nothing
-
-        If Len(employeeCode) > 0 Then
-            If dscnvMap.Exists("CODE|" & UCase$(employeeCode)) Then
-                Set dscnvItem = dscnvMap("CODE|" & UCase$(employeeCode))
-            End If
-        End If
-
-        If dscnvItem Is Nothing Then
-            If dscnvMap.Exists("NAME|" & normalizedName) Then
-                Set dscnvItem = dscnvMap("NAME|" & normalizedName)
-            End If
-        End If
-
-        If Not dscnvItem Is Nothing Then
-            citizenID = dscnvItem("CitizenID")
-            department = dscnvItem("Department")
-            section = dscnvItem("Section")
-            position = dscnvItem("Position")
-        Else
-            citizenID = ""
-            department = ""
-            section = ""
-            position = ""
-            LogMessage "[" & factoryName & "] KHONG MAP DSCNV: " & employeeName & " / " & employeeCode
+        citizenID = "": department = "": section = "": position = ""
+        If dscnvMap.Exists(normalizedName) Then
+            citizenID = dscnvMap(normalizedName)("CitizenID")
+            department = dscnvMap(normalizedName)("Department")
+            section = dscnvMap(normalizedName)("Section")
+            position = dscnvMap(normalizedName)("Position")
         End If
 
         Set record = CreateObject("Scripting.Dictionary")
         record.CompareMode = vbTextCompare
-
         record.Add "employeeCode", employeeCode
         record.Add "fullName", employeeName
         record.Add "citizenID", citizenID
@@ -326,60 +282,59 @@ Private Function ReadPayrollWorkbook_( _
         record.Add "section", section
         record.Add "position", position
 
-        record.Add "basicSalary", NumberByField_(wsSalary, rowIndex, salaryMap, "basicSalary")
-        record.Add "workingDays", NumberByField_(wsSalary, rowIndex, salaryMap, "workingDays")
-        record.Add "holidayDays", NumberByField_(wsSalary, rowIndex, salaryMap, "holidayDays")
-        record.Add "paidLeaveDays", NumberByField_(wsSalary, rowIndex, salaryMap, "paidLeaveDays")
-        record.Add "unpaidLeaveDays", NumberByField_(wsSalary, rowIndex, salaryMap, "unpaidLeaveDays")
-        record.Add "overtimeHours", NumberByField_(wsSalary, rowIndex, salaryMap, "overtimeHours")
-        record.Add "holidayWorkHours", NumberByField_(wsSalary, rowIndex, salaryMap, "holidayWorkHours")
-        record.Add "holidayOvertimeHours", NumberByField_(wsSalary, rowIndex, salaryMap, "holidayOvertimeHours")
-        record.Add "minimumRegionalLeaveDays", NumberByField_(wsSalary, rowIndex, salaryMap, "minimumRegionalLeaveDays")
-        record.Add "nightHolidayOvertimeHours", NumberByField_(wsSalary, rowIndex, salaryMap, "nightHolidayOvertimeHours")
-        record.Add "nightOvertimeHours", NumberByField_(wsSalary, rowIndex, salaryMap, "nightOvertimeHours")
-        record.Add "holidayWorkDayHours", NumberByField_(wsSalary, rowIndex, salaryMap, "holidayWorkDayHours")
-        record.Add "holidayOvertimeDayHours", NumberByField_(wsSalary, rowIndex, salaryMap, "holidayOvertimeDayHours")
-        record.Add "nightHolidayOvertimeDayHours", NumberByField_(wsSalary, rowIndex, salaryMap, "nightHolidayOvertimeDayHours")
-        record.Add "nightShiftDays", NumberByField_(wsSalary, rowIndex, salaryMap, "nightShiftDays")
-
-        record.Add "otherMoney", NumberByField_(wsSalary, rowIndex, salaryMap, "otherMoney")
-        record.Add "disciplinaryMoney", NumberByField_(wsSalary, rowIndex, salaryMap, "disciplinaryMoney")
-        record.Add "loyalty2Years", NumberByField_(wsSalary, rowIndex, salaryMap, "loyalty2Years")
-        record.Add "loyalty5Years", NumberByField_(wsSalary, rowIndex, salaryMap, "loyalty5Years")
-        record.Add "loyalty10Years", NumberByField_(wsSalary, rowIndex, salaryMap, "loyalty10Years")
-        record.Add "housingAllowance", NumberByField_(wsSalary, rowIndex, salaryMap, "housingAllowance")
-        record.Add "transportationAllowance", NumberByField_(wsSalary, rowIndex, salaryMap, "transportationAllowance")
-        record.Add "attendanceBonus", NumberByField_(wsSalary, rowIndex, salaryMap, "attendanceBonus")
-        record.Add "severanceAndUnusedLeave", NumberByField_(wsSalary, rowIndex, salaryMap, "severanceAndUnusedLeave")
-
-        record.Add "monthlySalary", NumberByField_(wsSalary, rowIndex, salaryMap, "monthlySalary")
-        record.Add "overtimeSalary", NumberByField_(wsSalary, rowIndex, salaryMap, "overtimeSalary")
-        record.Add "commissionAndOverTargetBonus", NumberByField_(wsSalary, rowIndex, salaryMap, "commissionAndOverTargetBonus")
-
-        record.Add "otherIncome", OtherIncomeTotal_(wsSalary, rowIndex, salaryMap)
-
-        record.Add "otherDeductions", NumberByField_(wsSalary, rowIndex, salaryMap, "otherDeductions")
-        record.Add "advancePayment", NumberByField_(wsSalary, rowIndex, salaryMap, "advancePayment")
-        record.Add "socialInsurance", NumberByField_(wsSalary, rowIndex, salaryMap, "socialInsurance")
-        record.Add "healthInsurance", NumberByField_(wsSalary, rowIndex, salaryMap, "healthInsurance")
-        record.Add "unemploymentInsurance", NumberByField_(wsSalary, rowIndex, salaryMap, "unemploymentInsurance")
-        record.Add "personalIncomeTax", NumberByField_(wsSalary, rowIndex, salaryMap, "personalIncomeTax")
-        record.Add "grossIncome", NumberByField_(wsSalary, rowIndex, salaryMap, "grossIncome")
-        record.Add "netSalary", NumberByField_(wsSalary, rowIndex, salaryMap, "netSalary")
-
-        ' Keep non-core Excel columns available for future use.
-        ' These are sent in ExtraData but are ignored by the current GAS backend
-        ' until a matching PayrollConfig field is configured there.
-        record.Add "extraData", BuildExtraData_(wsSalary, rowIndex, extraHeaders)
+        record.Add "basicSalary", NumberByCol_(wsSalary, rowIndex, cols("basicSalary"))
+        record.Add "workingDays", NumberByCol_(wsSalary, rowIndex, cols("workingDays"))
+        record.Add "holidayDays", NumberByCol_(wsSalary, rowIndex, cols("holidayDays"))
+        record.Add "paidLeaveDays", NumberByCol_(wsSalary, rowIndex, cols("paidLeaveDays"))
+        record.Add "unpaidLeaveDays", NumberByCol_(wsSalary, rowIndex, cols("unpaidLeaveDays"))
+        record.Add "overtimeHours", NumberByCol_(wsSalary, rowIndex, cols("overtimeHours"))
+        record.Add "holidayWorkHours", NumberByCol_(wsSalary, rowIndex, cols("holidayWorkHours"))
+        record.Add "holidayOvertimeHours", NumberByCol_(wsSalary, rowIndex, cols("holidayOvertimeHours"))
+        record.Add "minimumRegionalLeaveDays", NumberByCol_(wsSalary, rowIndex, cols("minimumRegionalLeaveDays"))
+        record.Add "nightHolidayOvertimeHours", NumberByCol_(wsSalary, rowIndex, cols("nightHolidayOvertimeHours"))
+        record.Add "nightOvertimeHours", NumberByCol_(wsSalary, rowIndex, cols("nightOvertimeHours"))
+        record.Add "holidayWorkDayHours", NumberByCol_(wsSalary, rowIndex, cols("holidayWorkDayHours"))
+        record.Add "holidayOvertimeDayHours", NumberByCol_(wsSalary, rowIndex, cols("holidayOvertimeDayHours"))
+        record.Add "nightHolidayOvertimeDayHours", NumberByCol_(wsSalary, rowIndex, cols("nightHolidayOvertimeDayHours"))
+        record.Add "nightShiftDays", NumberByCol_(wsSalary, rowIndex, cols("nightShiftDays"))
+        record.Add "otherMoney", NumberByCol_(wsSalary, rowIndex, cols("otherMoney"))
+        record.Add "disciplinaryMoney", NumberByCol_(wsSalary, rowIndex, cols("disciplinaryMoney"))
+        record.Add "loyalty2Years", NumberByCol_(wsSalary, rowIndex, cols("loyalty2Years"))
+        record.Add "loyalty5Years", NumberByCol_(wsSalary, rowIndex, cols("loyalty5Years"))
+        record.Add "loyalty10Years", NumberByCol_(wsSalary, rowIndex, cols("loyalty10Years"))
+        record.Add "housingAllowance", NumberByCol_(wsSalary, rowIndex, cols("housingAllowance"))
+        record.Add "transportationAllowance", NumberByCol_(wsSalary, rowIndex, cols("transportationAllowance"))
+        record.Add "attendanceBonus", NumberByCol_(wsSalary, rowIndex, cols("attendanceBonus"))
+        record.Add "severanceAndUnusedLeave", NumberByCol_(wsSalary, rowIndex, cols("severanceAndUnusedLeave"))
+        record.Add "monthlySalary", NumberByCol_(wsSalary, rowIndex, cols("monthlySalary"))
+        record.Add "overtimeSalary", NumberByCol_(wsSalary, rowIndex, cols("overtimeSalary"))
+        record.Add "commissionAndOverTargetBonus", NumberByCol_(wsSalary, rowIndex, cols("commissionAndOverTargetBonus"))
+        record.Add "otherIncome", _
+            NumberByCol_(wsSalary,rowIndex,cols("otherMoney")) + _
+            NumberByCol_(wsSalary,rowIndex,cols("disciplinaryMoney")) + _
+            NumberByCol_(wsSalary,rowIndex,cols("loyalty2Years")) + _
+            NumberByCol_(wsSalary,rowIndex,cols("loyalty5Years")) + _
+            NumberByCol_(wsSalary,rowIndex,cols("loyalty10Years")) + _
+            NumberByCol_(wsSalary,rowIndex,cols("housingAllowance")) + _
+            NumberByCol_(wsSalary,rowIndex,cols("transportationAllowance")) + _
+            NumberByCol_(wsSalary,rowIndex,cols("attendanceBonus")) + _
+            NumberByCol_(wsSalary,rowIndex,cols("commissionAndOverTargetBonus")) + _
+            NumberByCol_(wsSalary,rowIndex,cols("severanceAndUnusedLeave"))
+        record.Add "otherDeductions", NumberByCol_(wsSalary, rowIndex, cols("otherDeductions"))
+        record.Add "advancePayment", NumberByCol_(wsSalary, rowIndex, cols("advancePayment"))
+        record.Add "socialInsurance", NumberByCol_(wsSalary, rowIndex, cols("socialInsurance"))
+        record.Add "healthInsurance", NumberByCol_(wsSalary, rowIndex, cols("healthInsurance"))
+        record.Add "unemploymentInsurance", NumberByCol_(wsSalary, rowIndex, cols("unemploymentInsurance"))
+        record.Add "personalIncomeTax", NumberByCol_(wsSalary, rowIndex, cols("personalIncomeTax"))
+        record.Add "grossIncome", NumberByCol_(wsSalary, rowIndex, cols("grossIncome"))
+        record.Add "netSalary", NumberByCol_(wsSalary, rowIndex, cols("netSalary"))
 
         result.Add record
-
 ContinueSalaryRow:
     Next rowIndex
 
     wb.Close SaveChanges:=False
     Set wb = Nothing
-
     LogMessage "[" & factoryName & "] Doc duoc " & CStr(result.Count) & " dong."
     Set ReadPayrollWorkbook_ = result
     Exit Function
@@ -393,257 +348,79 @@ ErrorHandler:
     Err.Raise Err.Number, "ReadPayrollWorkbook_", Err.Description
 End Function
 
-Private Function FindPayrollDataLastRow_(ByVal ws As Worksheet, ByVal nameColumn As Long) As Long
-    Dim lastRow As Long
-    Dim codeCol As Long
-    Dim r As Long
-    Dim employeeName As String
-    Dim employeeCode As String
-    Dim lastDataRow As Long
-
-    ' Do not stop at the first TOTAL/SUBTOTAL row.
-    ' Real payroll files can contain multiple TOTAL rows inside the sheet.
-    lastRow = LastUsedRow_(ws, nameColumn)
-
-    If lastRow < SHEET_START_ROW Then
-        FindPayrollDataLastRow_ = SHEET_START_ROW - 1
-        Exit Function
-    End If
-
-    codeCol = FindHeaderColumn_(ws, Array("Employee Code", "EmployeeCode", "Emp Code", "Mã nhân viên", "Ma nhan vien", "Mã NV"), SHEET_START_ROW - 1)
-    If codeCol = 0 Then codeCol = 4
-
-    lastDataRow = SHEET_START_ROW - 1
-
-    For r = SHEET_START_ROW To lastRow
-        employeeName = CellText_(ws.Cells(r, nameColumn))
-        employeeCode = CellText_(ws.Cells(r, codeCol))
-
-        ' A valid employee data row must have both employee code and name.
-        If Len(employeeName) > 0 And Len(employeeCode) > 0 Then
-            If Not IsSummaryRow_(employeeName, employeeCode) Then
-                lastDataRow = r
-            End If
-        End If
-    Next r
-
-    FindPayrollDataLastRow_ = lastDataRow
-End Function
-
-Private Function IsSummaryRow_(ByVal employeeName As String, ByVal employeeCode As String) As Boolean
-    Dim s As String
-
-    s = UCase$(Trim$(employeeName))
-    s = Replace$(s, " ", "")
-    s = Replace$(s, vbTab, "")
-
-    If Left$(s, 5) = "TOTAL" Or Left$(s, 7) = "SUBTOTAL" Then
-        IsSummaryRow_ = True
-        Exit Function
-    End If
-
-    If InStr(1, s, "TỔNG", vbTextCompare) > 0 Or _
-       InStr(1, s, "TONG", vbTextCompare) > 0 Then
-        IsSummaryRow_ = True
-        Exit Function
-    End If
-
-    IsSummaryRow_ = False
-End Function
-
-Private Function BuildDSCNVMap_(ByVal ws As Worksheet) As Object
-
-    Dim map As Object
-    Dim headerMap As Object
-    Dim lastRow As Long
-    Dim rowIndex As Long
-    Dim employeeName As String
-    Dim employeeCode As String
-    Dim key As String
-    Dim item As Object
-
-    Set map = CreateObject("Scripting.Dictionary")
-    map.CompareMode = vbTextCompare
-
-    Set headerMap = BuildDSCNVHeaderMap_(ws)
-    lastRow = LastUsedRow_(ws, headerMap("name"))
-
-    For rowIndex = SHEET_START_ROW To lastRow
-        employeeName = CellText_(ws.Cells(rowIndex, headerMap("name")))
-        employeeCode = ""
-
-        If CLng(headerMap("employeeCode")) > 0 Then
-            employeeCode = CellText_(ws.Cells(rowIndex, headerMap("employeeCode")))
-        End If
-
-        If Len(employeeName) > 0 Then
-            Set item = CreateObject("Scripting.Dictionary")
-            item.CompareMode = vbTextCompare
-
-            item.Add "EmployeeCode", employeeCode
-            item.Add "CitizenID", ReadCitizenID_(ws.Cells(rowIndex, headerMap("citizenID")))
-            item.Add "Department", CellText_(ws.Cells(rowIndex, headerMap("department")))
-            item.Add "Section", CellText_(ws.Cells(rowIndex, headerMap("section")))
-            item.Add "Position", CellText_(ws.Cells(rowIndex, headerMap("position")))
-
-            ' Prefer employee-code index when available.
-            If Len(employeeCode) > 0 Then
-                key = "CODE|" & UCase$(employeeCode)
-                If Not map.Exists(key) Then
-                    map.Add key, item
-                Else
-                    LogMessage "CANH BAO: Trung ma nhan vien trong DSCNV: " & employeeCode
-                End If
-            End If
-
-            ' Also maintain a name index as a fallback for legacy files.
-            key = "NAME|" & NormalizeName_(employeeName)
-            If Not map.Exists(key) Then
-                map.Add key, item
-            Else
-                LogMessage "CANH BAO: Trung ten trong DSCNV: " & employeeName
-            End If
-        End If
-    Next rowIndex
-
-    Set BuildDSCNVMap_ = map
-End Function
-
 Private Function BuildSalaryHeaderMap_(ByVal ws As Worksheet) As Object
-    Dim map As Object
-    Dim specs As Collection
-    Dim i As Long
+    Dim m As Object
+    Set m = CreateObject("Scripting.Dictionary")
+    m.CompareMode = vbTextCompare
+
+    AddHeader_ m, ws, "employeeCode", Array("Employee Code", "EmployeeCode", "Emp Code", "Mã nhân viên", "Ma nhan vien", "Mã NV"), 4, True
+    AddHeader_ m, ws, "fullName", Array("Full Name", "FullName", "Employee Name", "Name", "Họ tên", "Ho ten", "Tên nhân viên"), 84, True
+    AddHeader_ m, ws, "basicSalary", Array("Basic Salary", "BasicSalary", "Lương cơ bản", "Luong co ban"), 6, False
+    AddHeader_ m, ws, "workingDays", Array("Working Days", "WorkingDays", "Ngày công", "Ngay cong"), 8, False
+    AddHeader_ m, ws, "holidayDays", Array("Holiday Days", "HolidayDays", "Ngày lễ", "Ngay le"), 9, False
+    AddHeader_ m, ws, "paidLeaveDays", Array("Paid Leave Days", "PaidLeaveDays", "Phép hưởng lương", "Phep huong luong"), 10, False
+    AddHeader_ m, ws, "unpaidLeaveDays", Array("Unpaid Leave Days", "UnpaidLeaveDays", "Phép không lương", "Phep khong luong"), 11, False
+    AddHeader_ m, ws, "overtimeHours", Array("Overtime Hours", "OvertimeHours", "Giờ tăng ca", "Gio tang ca", "OT Hours"), 12, False
+    AddHeader_ m, ws, "holidayWorkHours", Array("Holiday Work Hours", "HolidayWorkHours", "Giờ làm ngày lễ", "Gio lam ngay le"), 13, False
+    AddHeader_ m, ws, "holidayOvertimeHours", Array("Holiday Overtime Hours", "HolidayOvertimeHours", "Giờ OT ngày lễ", "Gio OT ngay le"), 14, False
+    AddHeader_ m, ws, "minimumRegionalLeaveDays", Array("Minimum Regional Leave Days", "MinimumRegionalLeaveDays"), 15, False
+    AddHeader_ m, ws, "nightHolidayOvertimeHours", Array("Night Holiday OT", "Night Holiday Overtime Hours", "NightHolidayOvertimeHours"), 16, False
+    AddHeader_ m, ws, "nightOvertimeHours", Array("Night OT", "Night Overtime Hours", "NightOvertimeHours"), 17, False
+    AddHeader_ m, ws, "holidayWorkDayHours", Array("Holiday Work Day Hours", "HolidayWorkDayHours"), 18, False
+    AddHeader_ m, ws, "holidayOvertimeDayHours", Array("Holiday OT Day Hours", "HolidayOvertimeDayHours"), 19, False
+    AddHeader_ m, ws, "nightHolidayOvertimeDayHours", Array("Night Holiday OT Day", "NightHolidayOvertimeDayHours"), 20, False
+    AddHeader_ m, ws, "nightShiftDays", Array("Night Shift Days", "NightShiftDays"), 21, False
+    AddHeader_ m, ws, "otherMoney", Array("Other Money", "OtherMoney", "Tiền khác", "Tien khac"), 24, False
+    AddHeader_ m, ws, "disciplinaryMoney", Array("Disciplinary Money", "DisciplinaryMoney", "Tiền kỷ luật"), 25, False
+    AddHeader_ m, ws, "loyalty2Years", Array("Loyalty 2 Years", "Loyalty2Years", "Thâm niên 2 năm"), 26, False
+    AddHeader_ m, ws, "loyalty5Years", Array("Loyalty 5 Years", "Loyalty5Years", "Thâm niên 5 năm"), 27, False
+    AddHeader_ m, ws, "loyalty10Years", Array("Loyalty 10 Years", "Loyalty10Years", "Thâm niên 10 năm"), 28, False
+    AddHeader_ m, ws, "housingAllowance", Array("Housing", "Housing Allowance", "HousingAllowance", "Phụ cấp nhà ở"), 29, False
+    AddHeader_ m, ws, "transportationAllowance", Array("Transport", "Transportation Allowance", "TransportationAllowance", "Phụ cấp đi lại"), 30, False
+    AddHeader_ m, ws, "attendanceBonus", Array("Attendance", "Attendance Bonus", "AttendanceBonus", "Chuyên cần"), 31, False
+    AddHeader_ m, ws, "severanceAndUnusedLeave", Array("Severance Unused Leave", "SeveranceAndUnusedLeave"), 32, False
+    AddHeader_ m, ws, "socialInsurance", Array("Social Insurance", "SocialInsurance", "BHXH"), 33, False
+    AddHeader_ m, ws, "healthInsurance", Array("Health Insurance", "HealthInsurance", "BHYT"), 34, False
+    AddHeader_ m, ws, "unemploymentInsurance", Array("Unemployment Insurance", "UnemploymentInsurance", "BHTN"), 35, False
+    AddHeader_ m, ws, "otherDeductions", Array("Other Deductions", "OtherDeductions", "Khấu trừ khác"), 36, False
+    AddHeader_ m, ws, "advancePayment", Array("Advance", "Advance Payment", "AdvancePayment", "Tạm ứng"), 37, False
+    AddHeader_ m, ws, "monthlySalary", Array("Monthly Salary", "MonthlySalary", "Lương tháng"), 40, False
+    AddHeader_ m, ws, "overtimeSalary", Array("Overtime Salary", "OvertimeSalary", "Tiền tăng ca"), 41, False
+    AddHeader_ m, ws, "commissionAndOverTargetBonus", Array("Commission", "Commission And Over Target Bonus", "CommissionAndOverTargetBonus", "Hoa hồng"), 43, False
+    AddHeader_ m, ws, "grossIncome", Array("Gross Income", "GrossIncome", "Tổng thu nhập"), 44, False
+    AddHeader_ m, ws, "personalIncomeTax", Array("Personal Income Tax", "PersonalIncomeTax", "PIT", "Thuế TNCN"), 46, False
+    AddHeader_ m, ws, "netSalary", Array("Net Salary", "NetSalary", "Thực nhận", "Net Pay"), 49, False
+
+    Set BuildSalaryHeaderMap_ = m
+End Function
+
+Private Sub AddHeader_(ByVal m As Object, ByVal ws As Worksheet, ByVal key As String, ByVal aliases As Variant, ByVal fallbackCol As Long, ByVal required As Boolean)
     Dim col As Long
-    Dim key As String
-    Dim required As Boolean
-    Dim legacyCol As Long
-
-    Set map = CreateObject("Scripting.Dictionary")
-    map.CompareMode = vbTextCompare
-
-    Set specs = SalaryFieldSpecs_()
-
-    For i = 1 To specs.Count
-        key = CStr(specs(i)(0))
-        required = CBool(specs(i)(2))
-        legacyCol = CLng(specs(i)(3))
-        col = FindHeaderColumn_(ws, specs(i)(1), SHEET_START_ROW - 1)
-
-        If col = 0 And legacyCol > 0 Then
-            col = legacyCol
-            LogMessage "CANH BAO: Khong tim thay Header cho '" & key & "'. Dung cot legacy " & CStr(legacyCol) & "."
-        End If
-
-        If col = 0 And required Then
-            Err.Raise vbObjectError + 2101, "BuildSalaryHeaderMap_", _
-                      "Khong tim thay cot bat buoc '" & key & "'. Alias: " & Join(specs(i)(1), ", ")
-        End If
-
-        map.Add key, col
-    Next i
-
-    LogHeaderMap_ ws, map, specs
-    Set BuildSalaryHeaderMap_ = map
-End Function
-
-Private Function SalaryFieldSpecs_() As Collection
-    Dim specs As Collection
-    Set specs = New Collection
-
-    ' key, aliases(), required, legacy fallback column
-    SalarySpecAdd_ specs, "employeeCode", Array("Employee Code", "EmployeeCode", "Emp Code", "Mã nhân viên", "Ma nhan vien", "Mã NV"), True, 4
-    SalarySpecAdd_ specs, "fullName", Array("Full Name", "FullName", "Employee Name", "Name", "Họ tên", "Ho ten", "Tên nhân viên", "Ten nhan vien"), True, 84
-    SalarySpecAdd_ specs, "basicSalary", Array("Basic Salary", "BasicSalary", "Lương cơ bản", "Luong co ban"), False, 6
-    SalarySpecAdd_ specs, "workingDays", Array("Working Days", "WorkingDays", "Ngày công", "Ngay cong", "Paid Working Days"), False, 8
-    SalarySpecAdd_ specs, "holidayDays", Array("Holiday Days", "HolidayDays", "Ngày lễ", "Ngay le"), False, 9
-    SalarySpecAdd_ specs, "paidLeaveDays", Array("Paid Leave Days", "PaidLeaveDays", "Phép hưởng lương", "Phep huong luong"), False, 10
-    SalarySpecAdd_ specs, "unpaidLeaveDays", Array("Unpaid Leave Days", "UnpaidLeaveDays", "Phép không lương", "Phep khong luong"), False, 11
-    SalarySpecAdd_ specs, "overtimeHours", Array("Overtime Hours", "OvertimeHours", "Giờ tăng ca", "Gio tang ca", "OT Hours"), False, 12
-    SalarySpecAdd_ specs, "holidayWorkHours", Array("Holiday Work Hours", "HolidayWorkHours", "Giờ làm ngày lễ", "Gio lam ngay le"), False, 13
-    SalarySpecAdd_ specs, "holidayOvertimeHours", Array("Holiday Overtime Hours", "HolidayOvertimeHours", "Giờ OT ngày lễ", "Gio OT ngay le"), False, 14
-    SalarySpecAdd_ specs, "minimumRegionalLeaveDays", Array("Minimum Regional Leave Days", "MinimumRegionalLeaveDays", "Ngày phép tối thiểu vùng", "Ngay phep toi thieu vung"), False, 15
-    SalarySpecAdd_ specs, "nightHolidayOvertimeHours", Array("Night Holiday OT", "Night Holiday Overtime Hours", "NightHolidayOvertimeHours", "Giờ OT đêm ngày lễ", "Gio OT dem ngay le"), False, 16
-    SalarySpecAdd_ specs, "nightOvertimeHours", Array("Night OT", "Night Overtime Hours", "NightOvertimeHours", "Giờ OT ban đêm", "Gio OT ban dem"), False, 17
-    SalarySpecAdd_ specs, "holidayWorkDayHours", Array("Holiday Work Day Hours", "HolidayWorkDayHours", "Giờ ngày làm lễ", "Gio ngay lam le"), False, 18
-    SalarySpecAdd_ specs, "holidayOvertimeDayHours", Array("Holiday OT Day Hours", "HolidayOvertimeDayHours", "Giờ ngày OT lễ", "Gio ngay OT le"), False, 19
-    SalarySpecAdd_ specs, "nightHolidayOvertimeDayHours", Array("Night Holiday OT Day", "NightHolidayOvertimeDayHours", "Giờ ngày OT đêm lễ", "Gio ngay OT dem le"), False, 20
-    SalarySpecAdd_ specs, "nightShiftDays", Array("Night Shift Days", "NightShiftDays", "Ngày ca đêm", "Ngay ca dem"), False, 21
-    SalarySpecAdd_ specs, "otherMoney", Array("Other Money", "OtherMoney", "Tiền khác", "Tien khac"), False, 24
-    SalarySpecAdd_ specs, "disciplinaryMoney", Array("Disciplinary Money", "DisciplinaryMoney", "Tiền kỷ luật", "Tien ky luat"), False, 25
-    SalarySpecAdd_ specs, "loyalty2Years", Array("Loyalty 2 Years", "Loyalty2Years", "Thâm niên 2 năm", "Tham nien 2 nam"), False, 26
-    SalarySpecAdd_ specs, "loyalty5Years", Array("Loyalty 5 Years", "Loyalty5Years", "Thâm niên 5 năm", "Tham nien 5 nam"), False, 27
-    SalarySpecAdd_ specs, "loyalty10Years", Array("Loyalty 10 Years", "Loyalty10Years", "Thâm niên 10 năm", "Tham nien 10 nam"), False, 28
-    SalarySpecAdd_ specs, "housingAllowance", Array("Housing", "Housing Allowance", "HousingAllowance", "Phụ cấp nhà ở", "Phu cap nha o"), False, 29
-    SalarySpecAdd_ specs, "transportationAllowance", Array("Transport", "Transportation Allowance", "TransportationAllowance", "Phụ cấp đi lại", "Phu cap di lai"), False, 30
-    SalarySpecAdd_ specs, "attendanceBonus", Array("Attendance", "Attendance Bonus", "AttendanceBonus", "Chuyên cần", "Chuyen can"), False, 31
-    SalarySpecAdd_ specs, "severanceAndUnusedLeave", Array("Severance Unused Leave", "SeveranceAndUnusedLeave", "Trợ cấp thôi việc phép tồn", "Tro cap thoi viec phep ton"), False, 32
-    SalarySpecAdd_ specs, "socialInsurance", Array("Social Insurance", "SocialInsurance", "BHXH", "BHXH Employee", "Bảo hiểm xã hội"), False, 33
-    SalarySpecAdd_ specs, "healthInsurance", Array("Health Insurance", "HealthInsurance", "BHYT", "BHYT Employee", "Bảo hiểm y tế"), False, 34
-    SalarySpecAdd_ specs, "unemploymentInsurance", Array("Unemployment Insurance", "UnemploymentInsurance", "BHTN", "BHTN Employee", "Bảo hiểm thất nghiệp"), False, 35
-    SalarySpecAdd_ specs, "otherDeductions", Array("Other Deductions", "OtherDeductions", "Khấu trừ khác", "Khau tru khac"), False, 36
-    SalarySpecAdd_ specs, "advancePayment", Array("Advance", "Advance Payment", "AdvancePayment", "Tạm ứng", "Tam ung"), False, 37
-    SalarySpecAdd_ specs, "monthlySalary", Array("Monthly Salary", "MonthlySalary", "Lương tháng", "Luong thang"), False, 40
-    SalarySpecAdd_ specs, "overtimeSalary", Array("Overtime Salary", "OvertimeSalary", "Tiền tăng ca", "Tien tang ca"), False, 41
-    SalarySpecAdd_ specs, "commissionAndOverTargetBonus", Array("Commission", "Commission And Over Target Bonus", "CommissionAndOverTargetBonus", "Hoa hồng", "Hoa hong"), False, 43
-    SalarySpecAdd_ specs, "grossIncome", Array("Gross Income", "GrossIncome", "Tổng thu nhập", "Tong thu nhap"), False, 44
-    SalarySpecAdd_ specs, "personalIncomeTax", Array("Personal Income Tax", "PersonalIncomeTax", "PIT", "Thuế TNCN", "Thue TNCN"), False, 46
-    SalarySpecAdd_ specs, "netSalary", Array("Net Salary", "NetSalary", "Thực nhận", "Thuc nhan", "Net Pay"), False, 49
-
-    Set SalaryFieldSpecs_ = specs
-End Function
-
-Private Sub SalarySpecAdd_(ByVal specs As Collection, ByVal key As String, ByVal aliases As Variant, ByVal required As Boolean, ByVal legacyCol As Long)
-    specs.Add Array(key, aliases, required, legacyCol)
+    col = FindHeader_(ws, aliases, 6)
+    If col = 0 Then col = fallbackCol
+    If required And col = 0 Then Err.Raise vbObjectError + 2101, "Header Mapping", "Khong tim thay cot: " & key
+    m.Add key, col
+    If FindHeader_(ws, aliases, 6) = 0 Then LogMessage "CANH BAO: " & key & " dung cot legacy " & CStr(fallbackCol)
 End Sub
 
-Private Function BuildDSCNVHeaderMap_(ByVal ws As Worksheet) As Object
-    Dim map As Object
-    Set map = CreateObject("Scripting.Dictionary")
-    map.CompareMode = vbTextCompare
-
-    ' Employee code is optional because some legacy DSCNV files do not contain it.
-    map.Add "employeeCode", FindHeaderColumn_(ws, Array("Employee Code", "EmployeeCode", "Emp Code", "Mã nhân viên", "Ma nhan vien", "Mã NV"), SHEET_START_ROW - 1)
-    map.Add "name", FindHeaderWithFallback_(ws, Array("Name", "Full Name", "Employee Name", "Họ tên", "Ho ten", "Tên nhân viên"), 2, "DSCNV Name")
-    map.Add "citizenID", FindHeaderWithFallback_(ws, Array("Citizen ID", "CitizenID", "CCCD", "CMND", "ID Card", "Số CCCD", "So CCCD"), 8, "DSCNV CitizenID")
-    map.Add "department", FindHeaderWithFallback_(ws, Array("Department", "Dept", "Bộ phận", "Bo phan"), 32, "DSCNV Department")
-    map.Add "section", FindHeaderWithFallback_(ws, Array("Section", "Team", "Tổ", "To"), 33, "DSCNV Section")
-    map.Add "position", FindHeaderWithFallback_(ws, Array("Position", "Job Title", "Chức vụ", "Chuc vu"), 34, "DSCNV Position")
-
-    Set BuildDSCNVHeaderMap_ = map
-End Function
-
-Private Function FindHeaderWithFallback_(ByVal ws As Worksheet, ByVal aliases As Variant, ByVal legacyCol As Long, ByVal label As String) As Long
-    Dim col As Long
-    col = FindHeaderColumn_(ws, aliases, SHEET_START_ROW - 1)
-    If col = 0 Then
-        col = legacyCol
-        LogMessage "CANH BAO: Khong tim thay Header cho " & label & ". Dung cot legacy " & CStr(legacyCol) & "."
-    End If
-    FindHeaderWithFallback_ = col
-End Function
-
-Private Function FindHeaderColumn_(ByVal ws As Worksheet, ByVal aliases As Variant, ByVal maxHeaderRow As Long) As Long
-    Dim r As Long, c As Long, lastCol As Long
-    Dim normalizedCell As String, aliasItem As Variant
-    Dim target As String
-
-    For r = 1 To maxHeaderRow
-        lastCol = ws.Cells(r, ws.Columns.Count).End(xlToLeft).Column
+Private Function FindHeader_(ByVal ws As Worksheet, ByVal aliases As Variant, ByVal maxRow As Long) As Long
+    Dim r As Long, c As Long, lastCol As Long, a As Variant
+    Dim cellText As String
+    lastCol = ws.Cells(1, ws.Columns.Count).End(xlToLeft).Column
+    If lastCol < 1 Then lastCol = 1
+    For r = 1 To maxRow
         For c = 1 To lastCol
-            normalizedCell = NormalizeHeader_(CStr(ws.Cells(r, c).Value2))
-            If Len(normalizedCell) > 0 Then
-                For Each aliasItem In aliases
-                    target = NormalizeHeader_(CStr(aliasItem))
-                    If normalizedCell = target Then
-                        FindHeaderColumn_ = c
+            cellText = NormalizeHeader_(CStr(ws.Cells(r, c).Value2))
+            If Len(cellText) > 0 Then
+                For Each a In aliases
+                    If cellText = NormalizeHeader_(CStr(a)) Then
+                        FindHeader_ = c
                         Exit Function
                     End If
-                Next aliasItem
+                Next a
             End If
         Next c
     Next r
-
-    FindHeaderColumn_ = 0
 End Function
 
 Private Function NormalizeHeader_(ByVal value As String) As String
@@ -654,40 +431,16 @@ Private Function NormalizeHeader_(ByVal value As String) As String
     s = Replace(s, vbTab, " ")
     s = Replace(s, "_", " ")
     s = Replace(s, "-", " ")
-    s = Replace(s, ".", " ")
-    s = Replace(s, ":", " ")
-    Do While InStr(s, "  ") > 0
-        s = Replace(s, "  ", " ")
-    Loop
+    Do While InStr(s, "  ") > 0: s = Replace(s, "  ", " "): Loop
     NormalizeHeader_ = s
 End Function
 
-Private Function OtherIncomeTotal_(ByVal ws As Worksheet, ByVal rowIndex As Long, ByVal salaryMap As Object) As Double
-    Dim total As Double
-
-    total = 0
-    total = total + NumberByField_(ws, rowIndex, salaryMap, "otherMoney")
-    total = total + NumberByField_(ws, rowIndex, salaryMap, "disciplinaryMoney")
-    total = total + NumberByField_(ws, rowIndex, salaryMap, "loyalty2Years")
-    total = total + NumberByField_(ws, rowIndex, salaryMap, "loyalty5Years")
-    total = total + NumberByField_(ws, rowIndex, salaryMap, "loyalty10Years")
-    total = total + NumberByField_(ws, rowIndex, salaryMap, "housingAllowance")
-    total = total + NumberByField_(ws, rowIndex, salaryMap, "transportationAllowance")
-    total = total + NumberByField_(ws, rowIndex, salaryMap, "attendanceBonus")
-    total = total + NumberByField_(ws, rowIndex, salaryMap, "commissionAndOverTargetBonus")
-    total = total + NumberByField_(ws, rowIndex, salaryMap, "severanceAndUnusedLeave")
-
-    OtherIncomeTotal_ = total
-End Function
-
-Private Function NumberByField_(ByVal ws As Worksheet, ByVal rowIndex As Long, ByVal headerMap As Object, ByVal fieldKey As String) As Double
-    If headerMap.Exists(fieldKey) Then
-        If CLng(headerMap(fieldKey)) > 0 Then
-            NumberByField_ = CellNumber_(ws.Cells(rowIndex, CLng(headerMap(fieldKey))))
-            Exit Function
-        End If
+Private Function NumberByCol_(ByVal ws As Worksheet, ByVal rowIndex As Long, ByVal col As Long) As Double
+    If col <= 0 Then
+        NumberByCol_ = 0
+    Else
+        NumberByCol_ = CellNumber_(ws.Cells(rowIndex, col))
     End If
-    NumberByField_ = 0
 End Function
 
 Private Function CellText_(ByVal cell As Range) As String
@@ -698,108 +451,91 @@ SafeEmpty:
     CellText_ = ""
 End Function
 
-Private Function CollectExtraHeaders_(ByVal ws As Worksheet, ByVal salaryMap As Object) As Object
-    Dim result As Object
-    Dim used As Object
-    Dim r As Long, c As Long, lastCol As Long
-    Dim header As String, key As String
+Private Function BuildDSCNVMap_( _
+    ByVal ws As Worksheet) As Object
 
-    Set result = CreateObject("Scripting.Dictionary")
-    result.CompareMode = vbTextCompare
-    Set used = CreateObject("Scripting.Dictionary")
-    used.CompareMode = vbTextCompare
+    Dim map As Object
 
-    Dim k As Variant
-    For Each k In salaryMap.Keys
-        If CLng(salaryMap(k)) > 0 Then used(CStr(salaryMap(k))) = True
-    Next k
+    Dim lastRow As Long
+    Dim rowIndex As Long
 
-    For r = 1 To SHEET_START_ROW - 1
-        lastCol = ws.Cells(r, ws.Columns.Count).End(xlToLeft).Column
-        For c = 1 To lastCol
-            header = Trim$(CStr(ws.Cells(r, c).Value2))
-            If Len(header) > 0 Then
-                If Not used.Exists(CStr(c)) Then
-                    key = SafeFieldKey_(header)
-                    If Len(key) > 0 Then
-                        If Not result.Exists(key) Then result.Add key, c
-                    End If
-                End If
-            End If
-        Next c
-    Next r
+    Dim employeeName As String
+    Dim key As String
 
-    Set CollectExtraHeaders_ = result
-End Function
+    Dim item As Object
 
-Private Function BuildExtraData_(ByVal ws As Worksheet, ByVal rowIndex As Long, ByVal extraHeaders As Object) As Object
-    Dim result As Object
-    Dim k As Variant
-    Dim value As Variant
+    Set map = _
+        CreateObject("Scripting.Dictionary")
 
-    Set result = CreateObject("Scripting.Dictionary")
-    result.CompareMode = vbTextCompare
+    map.CompareMode = vbTextCompare
 
-    For Each k In extraHeaders.Keys
-        value = ws.Cells(rowIndex, CLng(extraHeaders(k))).Value2
-        If Len(Trim$(CStr(value))) > 0 Then
-            If IsNumeric(value) Then
-                result.Add CStr(k), CDbl(value)
+    lastRow = _
+        LastUsedRow_( _
+            ws, _
+            DSCNV_NAME_COL)
+
+    For rowIndex = _
+        SHEET_START_ROW To lastRow
+
+        employeeName = _
+            Trim$(CStr( _
+                ws.Cells( _
+                    rowIndex, _
+                    DSCNV_NAME_COL).Value2))
+
+        If Len(employeeName) > 0 Then
+
+            key = _
+                NormalizeName_(employeeName)
+
+            Set item = CreateObject("Scripting.Dictionary")
+
+            item.Add _
+                "CitizenID", _
+                ReadCitizenID_( _
+                    ws.Cells( _
+                        rowIndex, _
+                        DSCNV_CITIZEN_COL))
+
+            item.Add _
+                "Department", _
+                Trim$(CStr( _
+                    ws.Cells( _
+                        rowIndex, _
+                        DSCNV_DEPARTMENT_COL).Value2))
+
+            item.Add _
+                "Section", _
+                Trim$(CStr( _
+                    ws.Cells( _
+                        rowIndex, _
+                        DSCNV_SECTION_COL).Value2))
+
+            item.Add _
+                "Position", _
+                Trim$(CStr( _
+                    ws.Cells( _
+                        rowIndex, _
+                        DSCNV_POSITION_COL).Value2))
+
+            If map.Exists(key) Then
+
+                LogMessage _
+                    "CANH BAO: Trung ten trong DSCNV: " & _
+                    employeeName
+
             Else
-                result.Add CStr(k), CStr(value)
+
+                map.Add key, item
+
             End If
-        End If
-    Next k
 
-    Set BuildExtraData_ = result
-End Function
-
-Private Function SafeFieldKey_(ByVal header As String) As String
-    Dim s As String, i As Long, ch As String, code As Long, out As String
-    s = LCase$(Trim$(header))
-    s = Replace(s, "đ", "d")
-    s = Replace(s, "Đ", "d")
-    For i = 1 To Len(s)
-        ch = Mid$(s, i, 1)
-        code = AscW(ch)
-        If (code >= 48 And code <= 57) Or (code >= 97 And code <= 122) Then
-            out = out & ch
-        Else
-            out = out & "_"
         End If
-    Next i
-    Do While InStr(out, "__") > 0
-        out = Replace(out, "__", "_")
-    Loop
-    out = Trim$(out)
-    If Left$(out, 1) = "_" Then out = Mid$(out, 2)
-    If Right$(out, 1) = "_" Then out = Left$(out, Len(out) - 1)
-    SafeFieldKey_ = out
-End Function
 
-Private Sub LogHeaderMap_(ByVal ws As Worksheet, ByVal map As Object, ByVal specs As Collection)
-    Dim i As Long, key As String, col As Long
-    LogMessage "--- HEADER MAPPING: " & ws.Name & " ---"
-    For i = 1 To specs.Count
-        key = CStr(specs(i)(0))
-        col = CLng(map(key))
-        If col > 0 Then
-            LogMessage "MAP " & key & " => col " & CStr(col) & " | Header='" & CStr(ws.Cells(FindHeaderRow_(ws, col), col).Value2) & "'"
-        Else
-            LogMessage "MAP " & key & " => NOT FOUND / optional"
-        End If
-    Next i
-End Sub
+    Next rowIndex
 
-Private Function FindHeaderRow_(ByVal ws As Worksheet, ByVal col As Long) As Long
-    Dim r As Long
-    For r = 1 To SHEET_START_ROW - 1
-        If Len(Trim$(CStr(ws.Cells(r, col).Value2))) > 0 Then
-            FindHeaderRow_ = r
-            Exit Function
-        End If
-    Next r
-    FindHeaderRow_ = SHEET_START_ROW - 1
+    Set BuildDSCNVMap_ = map
+
 End Function
 
 Private Function ReadCitizenID_( _
@@ -1224,45 +960,13 @@ Private Function RecordToJson_( _
             
     AddJsonNumber_ json, _
         "netSalary", _
-        record("netSalary"), True
-
-    AddJsonNumber_ json, _
-        "nightHolidayOvertimeDayHours", _
-        record("nightHolidayOvertimeDayHours"), True
-
-    AddJsonObject_ json, _
-        "extraData", _
-        record("extraData"), False
+        record("netSalary"), False
 
     json = json & "}"
 
     RecordToJson_ = json
 
 End Function
-
-Private Sub AddJsonObject_(ByRef json As String, ByVal key As String, ByVal value As Object, ByVal addComma As Boolean)
-    Dim k As Variant
-    Dim first As Boolean
-    Dim v As Variant
-
-    json = json & """" & key & """:{"
-    first = True
-    If Not value Is Nothing Then
-        For Each k In value.Keys
-            If Not first Then json = json & ","
-            v = value(k)
-            json = json & """" & JsonEscape_(CStr(k)) & """:"
-            If IsNumeric(v) And VarType(v) <> vbString Then
-                json = json & JsonNumberString_(CDbl(v))
-            Else
-                json = json & """" & JsonEscape_(CStr(v)) & """"
-            End If
-            first = False
-        Next k
-    End If
-    json = json & "}"
-    If addComma Then json = json & ","
-End Sub
 
 Private Sub AddJsonString_( _
     ByRef json As String, _
