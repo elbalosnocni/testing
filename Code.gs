@@ -1,5 +1,5 @@
 const CONFIG = {
-  SPREADSHEET_ID: '1vlctfJ0KDzf2v5yTfk2WY26YCvB89mTIUd6bO7E-Jz0',
+  SPREADSHEET_ID: '1Y-f3xSzwrV2ycBnzThlrtgcOcHD2Z4iqLKqqTyVFejM',
 
   SESSION_SECONDS: 1800,
 
@@ -45,7 +45,6 @@ const PAYROLL_HEADERS = [
   'Section',
   'Position',
   'SalaryMonth',
-  'Flexible',
 
   'BasicSalary',
   'WorkingDays',
@@ -95,63 +94,6 @@ const PAYROLL_HEADERS = [
   'UpdatedAt'
 ];
 
-
-// Destination columns are resolved by header name, not hard-coded positions.
-// To add/reorder a Payroll column: add the header here and add its field mapping
-// in PAYROLL_FIELD_MAP below. Existing data logic will follow the header order.
-const PAYROLL_COL = {};
-PAYROLL_HEADERS.forEach(function(header, index) {
-  PAYROLL_COL[header] = index;
-});
-
-const PAYROLL_FIELD_MAP = {
-  EmployeeCode: 'employeeCode',
-  FullName: 'fullName',
-  CitizenID: 'citizenID',
-  Department: 'department',
-  Section: 'section',
-  Position: 'position',
-  SalaryMonth: 'salaryMonth',
-  Flexible: 'flexible',
-  BasicSalary: 'basicSalary',
-  WorkingDays: 'workingDays',
-  HolidayDays: 'holidayDays',
-  PaidLeaveDays: 'paidLeaveDays',
-  UnpaidLeaveDays: 'unpaidLeaveDays',
-  OvertimeHours: 'overtimeHours',
-  HolidayWorkHours: 'holidayWorkHours',
-  HolidayOvertimeHours: 'holidayOvertimeHours',
-  MinimumRegionalLeaveDays: 'minimumRegionalLeaveDays',
-  NightHolidayOvertimeHours: 'nightHolidayOvertimeHours',
-  NightOvertimeHours: 'nightOvertimeHours',
-  HolidayWorkDayHours: 'holidayWorkDayHours',
-  HolidayOvertimeDayHours: 'holidayOvertimeDayHours',
-  NightShiftDays: 'nightShiftDays',
-  OtherMoney: 'otherMoney',
-  DisciplinaryMoney: 'disciplinaryMoney',
-  Loyalty2Years: 'loyalty2Years',
-  Loyalty5Years: 'loyalty5Years',
-  Loyalty10Years: 'loyalty10Years',
-  HousingAllowance: 'housingAllowance',
-  TransportationAllowance: 'transportationAllowance',
-  AttendanceBonus: 'attendanceBonus',
-  SeveranceAndUnusedLeave: 'severanceAndUnusedLeave',
-  MonthlySalary: 'monthlySalary',
-  OvertimeSalary: 'overtimeSalary',
-  CommissionAndOverTargetBonus: 'commissionAndOverTargetBonus',
-  OtherIncome: 'otherIncome',
-  OtherDeductions: 'otherDeductions',
-  AdvancePayment: 'advancePayment',
-  SocialInsurance: 'socialInsurance',
-  HealthInsurance: 'healthInsurance',
-  UnemploymentInsurance: 'unemploymentInsurance',
-  PersonalIncomeTax: 'personalIncomeTax',
-  GrossIncome: 'grossIncome',
-  NetSalary: 'netSalary',
-  NightHolidayOvertimeDayHours: 'nightHolidayOvertimeDayHours',
-  UpdatedAt: 'updatedAt'
-};
-
 const ADMIN_HEADERS = [
   'Username',
   'PasswordHash',
@@ -167,7 +109,8 @@ const SESSION_HEADERS = [
   'EmployeeCode',
   'CreatedAt',
   'ExpiresAt',
-  'Active'
+  'Active',
+  'CitizenID'
 ];
 
 const AUDIT_HEADERS = [
@@ -363,55 +306,32 @@ function ensureSheet_(ss, name, headers) {
 
   if (!sheet) {
     sheet = ss.insertSheet(name);
-    sheet.getRange(1, 1, 1, headers.length).setValues([headers]);
-    sheet.setFrozenRows(1);
-    return sheet;
   }
 
-  const headerWidth = Math.max(sheet.getLastColumn(), 1);
-  const currentHeaders = sheet
-    .getRange(1, 1, 1, headerWidth)
-    .getValues()[0]
-    .map(function(value) { return String(value || '').trim(); });
+  if (sheet.getLastRow() === 0) {
+    sheet.getRange(1, 1, 1, headers.length).setValues([headers]);
+    sheet.setFrozenRows(1);
+  } else {
+    const current = sheet
+      .getRange(1, 1, 1, headers.length)
+      .getValues()[0];
 
-  let same = currentHeaders.length === headers.length;
-  if (same) {
+    let changed = false;
+
     for (let i = 0; i < headers.length; i++) {
-      if (currentHeaders[i] !== headers[i]) {
-        same = false;
+      if (String(current[i] || '') !== headers[i]) {
+        changed = true;
         break;
       }
     }
+
+    if (changed) {
+      sheet
+        .getRange(1, 1, 1, headers.length)
+        .setValues([headers]);
+    }
   }
 
-  if (same) {
-    sheet.setFrozenRows(1);
-    return sheet;
-  }
-
-  // Header-driven migration: adding/reordering a column will preserve existing
-  // values by header name instead of shifting data into the wrong field.
-  const lastRow = sheet.getLastRow();
-  const oldRows = lastRow > 1
-    ? sheet.getRange(2, 1, lastRow - 1, currentHeaders.length).getValues()
-    : [];
-  const oldIndex = {};
-  currentHeaders.forEach(function(header, index) {
-    if (header) oldIndex[header] = index;
-  });
-
-  const migrated = oldRows.map(function(oldRow) {
-    return headers.map(function(header) {
-      return oldIndex[header] !== undefined ? oldRow[oldIndex[header]] : '';
-    });
-  });
-
-  sheet.clearContents();
-  sheet.getRange(1, 1, 1, headers.length).setValues([headers]);
-  if (migrated.length) {
-    sheet.getRange(2, 1, migrated.length, headers.length).setValues(migrated);
-  }
-  sheet.setFrozenRows(1);
   return sheet;
 }
 
@@ -421,7 +341,7 @@ function login_(body) {
   const citizenID = normalizeCitizenID_(body.citizenID);
   const password = String(body.password || '');
 
-  if (!isValidCitizenID_(citizenID) || !password) {
+  if (!citizenID || !password) {
     return {
       success: false,
       error: 'INVALID_LOGIN'
@@ -470,7 +390,8 @@ function login_(body) {
 
   const token = createSession_(
     employee.employeeCode,
-    'EMPLOYEE'
+    'EMPLOYEE',
+    employee.citizenID
   );
 
   writeAudit_(
@@ -557,9 +478,9 @@ function changePassword_(body) {
     };
   }
 
-  const employee = findEmployeeByEmployeeCode_(
-    session.employeeCode
-  );
+  const employee = session.citizenID
+    ? findEmployeeByCitizenID_(session.citizenID)
+    : findEmployeeByEmployeeCode_(session.employeeCode);
 
   if (!employee) {
     return {
@@ -623,9 +544,9 @@ function getPayroll_(body) {
     };
   }
 
-  const employee = findEmployeeByEmployeeCode_(
-    session.employeeCode
-  );
+  const employee = session.citizenID
+    ? findEmployeeByCitizenID_(session.citizenID)
+    : findEmployeeByEmployeeCode_(session.employeeCode);
 
   if (!employee) {
     return {
@@ -974,80 +895,47 @@ function adminSyncStatus_(body) {
 }
 
 function syncPayroll_(body) {
-  if (
-    String(body.apiKey || '') !==
-    CONFIG.SYNC_API_KEY
-  ) {
-    return {
-      success: false,
-      error: 'INVALID_SYNC_KEY'
-    };
+  if (String(body.apiKey || '') !== CONFIG.SYNC_API_KEY) {
+    return { success: false, error: 'INVALID_SYNC_KEY' };
   }
 
   ensureSystem_();
 
   const month = normalizeSalaryMonth_(body.salaryMonth);
-
-  const records = Array.isArray(body.records)
-    ? body.records
-    : [];
-
+  const records = Array.isArray(body.records) ? body.records : [];
   const source = body.source || {};
 
-  if (!month) {
-    return {
-      success: false,
-      error: 'SALARY_MONTH_REQUIRED'
-    };
-  }
-
-  if (records.length === 0) {
-    return {
-      success: false,
-      error: 'NO_RECORDS'
-    };
-  }
+  if (!month) return { success: false, error: 'SALARY_MONTH_REQUIRED' };
+  if (!records.length) return { success: false, error: 'NO_RECORDS' };
 
   const lock = LockService.getScriptLock();
-
   lock.waitLock(30000);
 
   try {
-    const employeeSheet =
-      getSheet_(CONFIG.SHEETS.EMPLOYEES);
-
-    const payrollSheet =
-      getSheet_(CONFIG.SHEETS.PAYROLL);
-
-    const existingEmployees =
-      readEmployeeIndex_();
-
-    const payrollRows = [];
-
-    // CCCD is the business key. Only exactly 12 numeric digits are accepted.
-    // Duplicate records in the same month are collapsed by CCCD.
+    const employeeSheet = getSheet_(CONFIG.SHEETS.EMPLOYEES);
+    const payrollSheet = getSheet_(CONFIG.SHEETS.PAYROLL);
+    const existingEmployees = readEmployeeIndex_();
     const uniqueRecords = {};
+
     records.forEach(function(record) {
       const citizenID = normalizeCitizenID_(record.citizenID);
-      if (isValidCitizenID_(citizenID)) {
-        uniqueRecords[citizenID] = record;
-      }
+      if (!citizenID) return;
+
+      // CCCD la khoa duy nhat trong cung thang. Ma NV co the thay doi.
+      uniqueRecords[citizenID] = record;
     });
 
+    const payrollRows = [];
     let employeeCount = 0;
+    let skipped = 0;
 
-    Object.keys(uniqueRecords).forEach(function(codeKey) {
-      const record = uniqueRecords[codeKey];
-      const employeeCode =
-        String(record.employeeCode || '').trim();
-
-      const fullName =
-        String(record.fullName || '').trim();
-
-      const citizenID =
-        normalizeCitizenID_(record.citizenID);
+    Object.keys(uniqueRecords).forEach(function(citizenID) {
+      const record = uniqueRecords[citizenID];
+      const employeeCode = String(record.employeeCode || '').trim();
+      const fullName = String(record.fullName || '').trim();
 
       if (!employeeCode || !fullName || !isValidCitizenID_(citizenID)) {
+        skipped++;
         return;
       }
 
@@ -1057,61 +945,42 @@ function syncPayroll_(body) {
         citizenID: citizenID,
         department: String(record.department || ''),
         section: String(record.section || ''),
-        position: String(record.position || ''),
-        flexible: String(record.flexible || '').trim() || 'Snack'
+        position: String(record.position || '')
       };
 
-      upsertEmployee_(
-        employeeSheet,
-        existingEmployees,
-        employeeData
-      );
-
+      upsertEmployee_(employeeSheet, existingEmployees, employeeData);
       employeeCount++;
 
       payrollRows.push(
-        payrollRecordToRow_(
-          record,
-          month,
-          employeeData
-        )
+        payrollRecordToRow_(record, month, employeeData)
       );
     });
 
+    // Chi thay the du lieu cua dung thang dang dong bo.
+    // Cac thang cu duoc giu nguyen.
     const replacedCount = deletePayrollMonth_(month);
 
     if (payrollRows.length > 0) {
       const startRow = payrollSheet.getLastRow() + 1;
-      // Keep SalaryMonth as text so Google Sheets cannot turn 08-2026 into a Date.
-      payrollSheet.getRange(2, 7, Math.max(1, payrollSheet.getMaxRows() - 1), 1).setNumberFormat('@');
-      payrollSheet
-        .getRange(startRow, 1, payrollRows.length, PAYROLL_HEADERS.length)
+      payrollSheet.getRange(2, 7, Math.max(1, payrollSheet.getMaxRows() - 1), 1)
+        .setNumberFormat('@');
+      payrollSheet.getRange(startRow, 1, payrollRows.length, PAYROLL_HEADERS.length)
         .setValues(payrollRows);
     }
 
-    const statusSheet =
-      getSheet_(CONFIG.SHEETS.SYNC);
-
+    const statusSheet = getSheet_(CONFIG.SHEETS.SYNC);
     const statusRow = statusSheet.getLastRow() + 1;
     statusSheet.getRange(statusRow, 3).setNumberFormat('@');
     statusSheet.getRange(statusRow, 1, 1, SYNC_HEADERS.length).setValues([[
-      nowString_(),
-      'SUCCESS',
-      month,
-      source.snackFile || '',
-      source.flexibleFile || '',
-      employeeCount,
-      payrollRows.length,
-      'Payroll synchronized successfully'
+      nowString_(), 'SUCCESS', month,
+      source.snackFile || '', source.flexibleFile || '',
+      employeeCount, payrollRows.length,
+      'Payroll synchronized by CitizenID'
     ]]);
 
     writeAudit_(
-      'VBA_SYNC',
-      'SYSTEM',
-      'SYNC_PAYROLL',
-      month,
-      '',
-      'Payroll synchronization completed'
+      'VBA_SYNC', 'SYSTEM', 'SYNC_PAYROLL', month, '',
+      'Completed; skipped invalid CitizenID rows: ' + skipped
     );
 
     return {
@@ -1119,32 +988,29 @@ function syncPayroll_(body) {
       month: month,
       employeeCount: employeeCount,
       payrollCount: payrollRows.length,
-      replacedCount: replacedCount
+      replacedCount: replacedCount,
+      skippedInvalidCitizenID: skipped
     };
   } catch (error) {
-    const statusSheet =
-      getSheet_(CONFIG.SHEETS.SYNC);
-
+    const statusSheet = getSheet_(CONFIG.SHEETS.SYNC);
     const errorRow = statusSheet.getLastRow() + 1;
     statusSheet.getRange(errorRow, 3).setNumberFormat('@');
     statusSheet.getRange(errorRow, 1, 1, SYNC_HEADERS.length).setValues([[
-      nowString_(),
-      'ERROR',
-      month,
-      source.snackFile || '',
-      source.flexibleFile || '',
-      0,
-      0,
-      String(error.message || error)
+      nowString_(), 'ERROR', month,
+      source.snackFile || '', source.flexibleFile || '',
+      0, 0, String(error.message || error)
     ]]);
-
     throw error;
   } finally {
     lock.releaseLock();
   }
 }
 
-function payrollRecordToRow_(record, month, employee) {
+function payrollRecordToRow_(
+  record,
+  month,
+  employee
+) {
   // Excel khong co cot OtherIncome rieng. Muc III la tong cac subgroup.
   const otherIncome =
     numberValue_(record.otherMoney) +
@@ -1158,19 +1024,62 @@ function payrollRecordToRow_(record, month, employee) {
     numberValue_(record.commissionAndOverTargetBonus) +
     numberValue_(record.severanceAndUnusedLeave);
 
-  const data = Object.assign({}, record, employee, {
-    salaryMonth: month,
-    otherIncome: otherIncome,
-    updatedAt: nowString_()
-  });
+  return [
+    employee.employeeCode,
+    employee.fullName,
+    employee.citizenID,
+    employee.department,
+    employee.section,
+    employee.position,
+    month,
 
-  return PAYROLL_HEADERS.map(function(header) {
-    const key = PAYROLL_FIELD_MAP[header];
-    if (!key) return '';
-    return data[key] !== undefined && data[key] !== null
-      ? data[key]
-      : '';
-  });
+    numberValue_(record.basicSalary),
+    numberValue_(record.workingDays),
+    numberValue_(record.holidayDays),
+    numberValue_(record.paidLeaveDays),
+    numberValue_(record.unpaidLeaveDays),
+
+    numberValue_(record.overtimeHours),
+    numberValue_(record.holidayWorkHours),
+    numberValue_(record.holidayOvertimeHours),
+
+    numberValue_(record.minimumRegionalLeaveDays),
+    numberValue_(record.nightHolidayOvertimeHours),
+    numberValue_(record.nightOvertimeHours),
+
+    numberValue_(record.holidayWorkDayHours),
+    numberValue_(record.holidayOvertimeDayHours),
+    numberValue_(record.nightShiftDays),
+
+    numberValue_(record.otherMoney),
+    numberValue_(record.disciplinaryMoney),
+    numberValue_(record.loyalty2Years),
+    numberValue_(record.loyalty5Years),
+    numberValue_(record.loyalty10Years),
+    numberValue_(record.housingAllowance),
+    numberValue_(record.transportationAllowance),
+    numberValue_(record.attendanceBonus),
+    numberValue_(record.severanceAndUnusedLeave),
+
+    numberValue_(record.monthlySalary),
+    numberValue_(record.overtimeSalary),
+    numberValue_(record.commissionAndOverTargetBonus),
+    otherIncome,
+
+    numberValue_(record.otherDeductions),
+    numberValue_(record.advancePayment),
+
+    numberValue_(record.socialInsurance),
+    numberValue_(record.healthInsurance),
+    numberValue_(record.unemploymentInsurance),
+    numberValue_(record.personalIncomeTax),
+
+    numberValue_(record.grossIncome),
+    numberValue_(record.netSalary),
+    numberValue_(record.nightHolidayOvertimeDayHours),
+
+    nowString_()
+  ];
 }
 
 function deletePayrollMonth_(month) {
@@ -1188,7 +1097,7 @@ function deletePayrollMonth_(month) {
   let removed = 0;
 
   values.forEach(function(row) {
-    if (normalizeSalaryMonth_(row[PAYROLL_COL.SalaryMonth]) === targetMonth) {
+    if (normalizeSalaryMonth_(row[6]) === targetMonth) {
       removed++;
     } else {
       kept.push(row);
@@ -1206,21 +1115,14 @@ function deletePayrollMonth_(month) {
   return removed;
 }
 
-function upsertEmployee_(
-  sheet,
-  index,
-  employee
-) {
-  const existing =
-    index[employee.citizenID];
+function upsertEmployee_(sheet, index, employee) {
+  const key = normalizeCitizenID_(employee.citizenID);
+  if (!key) return;
+
+  const existing = index[key];
 
   if (!existing) {
-    const passwordData =
-      createPasswordHash_(
-        employee.employeeCode
-      );
-
-    sheet.getRange(2, 3, Math.max(1, sheet.getMaxRows() - 1), 1).setNumberFormat('@');
+    const passwordData = createPasswordHash_(employee.employeeCode);
     sheet.appendRow([
       employee.employeeCode,
       employee.fullName,
@@ -1234,130 +1136,70 @@ function upsertEmployee_(
       true,
       nowString_()
     ]);
-
     return;
   }
 
-  sheet.getRange(existing.row, 3).setNumberFormat('@');
-  sheet
-    .getRange(existing.row, 1, 1, 6)
-    .setValues([[
-      employee.employeeCode,
-      employee.fullName,
-      employee.citizenID,
-      employee.department,
-      employee.section,
-      employee.position
-    ]]);
-
-  sheet
-    .getRange(existing.row, 11)
-    .setValue(nowString_());
+  sheet.getRange(existing.row, 1, 1, 6).setValues([[
+    employee.employeeCode,
+    employee.fullName,
+    employee.citizenID,
+    employee.department,
+    employee.section,
+    employee.position
+  ]]);
+  sheet.getRange(existing.row, 11).setValue(nowString_());
 }
 
 function readEmployeeIndex_() {
-  const sheet =
-    getSheet_(CONFIG.SHEETS.EMPLOYEES);
-
+  const sheet = getSheet_(CONFIG.SHEETS.EMPLOYEES);
   const lastRow = sheet.getLastRow();
-
   const result = {};
 
-  if (lastRow <= 1) {
-    return result;
-  }
+  if (lastRow <= 1) return result;
 
-  const values = sheet
-    .getRange(
-      2,
-      1,
-      lastRow - 1,
-      EMPLOYEE_HEADERS.length
-    )
-    .getValues();
+  const values = sheet.getRange(2, 1, lastRow - 1, EMPLOYEE_HEADERS.length).getValues();
 
   values.forEach(function(row, index) {
-    const employeeCode =
-      String(row[0] || '').trim();
-
-    if (!employeeCode) {
-      return;
-    }
-
     const citizenID = normalizeCitizenID_(row[2]);
-    if (isValidCitizenID_(citizenID)) {
-      result[citizenID] = { row: index + 2 };
-    }
+    if (!citizenID) return;
+    result[citizenID] = { row: index + 2 };
   });
 
   return result;
 }
 
 function findEmployeeByCitizenID_(citizenID) {
-  const sheet =
-    getSheet_(CONFIG.SHEETS.EMPLOYEES);
+  const key = normalizeCitizenID_(citizenID);
+  if (!key) return null;
 
+  const sheet = getSheet_(CONFIG.SHEETS.EMPLOYEES);
   const lastRow = sheet.getLastRow();
+  if (lastRow <= 1) return null;
 
-  if (lastRow <= 1) {
-    return null;
-  }
+  const values = sheet.getRange(2, 1, lastRow - 1, EMPLOYEE_HEADERS.length).getValues();
 
-  const values = sheet
-    .getRange(
-      2,
-      1,
-      lastRow - 1,
-      EMPLOYEE_HEADERS.length
-    )
-    .getValues();
-
-  for (let i = 0; i < values.length; i++) {
-    const current =
-      normalizeCitizenID_(values[i][2]);
-
-    if (current === citizenID) {
-      return employeeFromRow_(
-        values[i],
-        i + 2
-      );
+  // Duyet tu duoi len: neu lich su cu con trung CCCD,
+  // dong duoc cap nhat moi nhat se la tai khoan hien hanh.
+  for (let i = values.length - 1; i >= 0; i--) {
+    if (normalizeCitizenID_(values[i][2]) === key) {
+      return employeeFromRow_(values[i], i + 2);
     }
   }
-
   return null;
 }
 
 function findEmployeeByEmployeeCode_(code) {
-  const sheet =
-    getSheet_(CONFIG.SHEETS.EMPLOYEES);
-
+  const sheet = getSheet_(CONFIG.SHEETS.EMPLOYEES);
   const lastRow = sheet.getLastRow();
+  if (lastRow <= 1) return null;
 
-  if (lastRow <= 1) {
-    return null;
-  }
-
-  const values = sheet
-    .getRange(
-      2,
-      1,
-      lastRow - 1,
-      EMPLOYEE_HEADERS.length
-    )
-    .getValues();
+  const values = sheet.getRange(2, 1, lastRow - 1, EMPLOYEE_HEADERS.length).getValues();
 
   for (let i = 0; i < values.length; i++) {
-    if (
-      String(values[i][0]).trim() ===
-      String(code).trim()
-    ) {
-      return employeeFromRow_(
-        values[i],
-        i + 2
-      );
+    if (String(values[i][0] || '').trim() === String(code || '').trim()) {
+      return employeeFromRow_(values[i], i + 2);
     }
   }
-
   return null;
 }
 
@@ -1372,111 +1214,57 @@ function employeeFromRow_(row, rowNumber) {
     position: String(row[5] || ''),
     passwordHash: String(row[6] || ''),
     passwordSalt: String(row[7] || ''),
-    mustChangePassword:
-      row[8] === true ||
-      String(row[8]).toLowerCase() === 'true',
-    active:
-      row[9] === true ||
-      String(row[9]).toLowerCase() === 'true',
+    mustChangePassword: row[8] === true || String(row[8]).toLowerCase() === 'true',
+    active: row[9] === true || String(row[9]).toLowerCase() === 'true',
     updatedAt: String(row[10] || '')
   };
 }
 
 function readEmployees_() {
-  const sheet =
-    getSheet_(CONFIG.SHEETS.EMPLOYEES);
-
+  const sheet = getSheet_(CONFIG.SHEETS.EMPLOYEES);
   const lastRow = sheet.getLastRow();
+  if (lastRow <= 1) return [];
 
-  if (lastRow <= 1) {
-    return [];
-  }
-
-  const values = sheet
-    .getRange(
-      2,
-      1,
-      lastRow - 1,
-      EMPLOYEE_HEADERS.length
-    )
-    .getValues();
+  const values = sheet.getRange(2, 1, lastRow - 1, EMPLOYEE_HEADERS.length).getValues();
 
   return values.map(function(row) {
-    return {
-      employeeCode: String(row[0] || ''),
-      fullName: String(row[1] || ''),
-      citizenID: normalizeCitizenID_(row[2]),
-      department: String(row[3] || ''),
-      section: String(row[4] || ''),
-      position: String(row[5] || ''),
-      mustChangePassword:
-        row[8] === true ||
-        String(row[8]).toLowerCase() === 'true',
-      active:
-        row[9] === true ||
-        String(row[9]).toLowerCase() === 'true',
-      updatedAt: String(row[10] || '')
-    };
+    return employeeFromRow_(row, 0);
   });
 }
 
-function columnNumberToLetter_(columnNumber) {
-  let n = Number(columnNumber);
-  let result = '';
-  while (n > 0) {
-    const remainder = (n - 1) % 26;
-    result = String.fromCharCode(65 + remainder) + result;
-    n = Math.floor((n - 1) / 26);
-  }
-  return result;
-}
-
 function getPayrollHistoryForEmployee_(citizenID) {
-  const normalized = normalizeCitizenID_(citizenID);
-  if (!isValidCitizenID_(normalized)) return [];
+  const keyCitizenID = normalizeCitizenID_(citizenID);
+  if (!keyCitizenID) return [];
 
   const sheet = getSheet_(CONFIG.SHEETS.PAYROLL);
   const lastRow = sheet.getLastRow();
   if (lastRow <= 1) return [];
 
-  // Search only the CitizenID column. This avoids reading all 40+ columns
-  // for every login and scales much better as 10 years of history accumulate.
-  const citizenColumn = PAYROLL_COL.CitizenID + 1;
-  const range = sheet.getRange(2, citizenColumn, lastRow - 1, 1);
-  const finder = range.createTextFinder(normalized)
-    .matchEntireCell(true)
-    .useRegularExpression(false);
-  const matches = finder.findAll();
-
-  if (!matches.length) return [];
-
-  const a1s = matches.map(function(cell) {
-    const lastColumnLetter = columnNumberToLetter_(sheet.getLastColumn());
-    return 'A' + cell.getRow() + ':' +
-      lastColumnLetter + cell.getRow();
-  });
-  const ranges = sheet.getRangeList(a1s).getRanges();
+  const values = sheet.getRange(2, 1, lastRow - 1, PAYROLL_HEADERS.length).getValues();
   const result = [];
   const seen = new Set();
 
-  ranges.forEach(function(range) {
-    const row = range.getValues()[0];
-    const item = payrollRowToObject_(row);
+  for (let i = 0; i < values.length; i++) {
+    if (normalizeCitizenID_(values[i][2]) !== keyCitizenID) continue;
+
+    const item = payrollRowToObject_(values[i]);
     const month = normalizeSalaryMonth_(item.SalaryMonth);
-    const key = normalized + '|' + month;
-    if (seen.has(key)) return;
+    const key = keyCitizenID + '|' + month;
+
+    if (seen.has(key)) continue;
     seen.add(key);
     result.push(item);
-  });
+  }
 
   result.sort(function(a, b) {
     return salaryMonthSortKey_(b.SalaryMonth) - salaryMonthSortKey_(a.SalaryMonth);
   });
+
   return result;
 }
 
-function getLatestPayrollForEmployee_(citizenID) {
-  const history = getPayrollHistoryForEmployee_(citizenID);
+function getLatestPayrollForEmployee_(employeeCode) {
+  const history = getPayrollHistoryForEmployee_(employeeCode);
   return history.length ? history[0] : null;
 }
 
@@ -1543,39 +1331,27 @@ function payrollRowToObject_(row) {
   return result;
 }
 
-function createSession_(
-  username,
-  role
-) {
+function createSession_(username, role, citizenID) {
   const token =
     Utilities.getUuid().replace(/-/g, '') +
     Utilities.getUuid().replace(/-/g, '');
 
-  const createdAt =
-    new Date();
+  const createdAt = new Date();
+  const expiresAt = new Date(
+    createdAt.getTime() + CONFIG.SESSION_SECONDS * 1000
+  );
 
-  const expiresAt =
-    new Date(
-      createdAt.getTime() +
-      CONFIG.SESSION_SECONDS * 1000
-    );
+  const employeeCode = role === 'EMPLOYEE' ? username : '';
 
-  const employeeCode =
-    role === 'EMPLOYEE'
-      ? username
-      : '';
-
-  const sheet =
-    getSheet_(CONFIG.SHEETS.SESSIONS);
-
-  sheet.appendRow([
+  getSheet_(CONFIG.SHEETS.SESSIONS).appendRow([
     token,
     username,
     role,
     employeeCode,
     createdAt,
     expiresAt,
-    true
+    true,
+    role === 'EMPLOYEE' ? normalizeCitizenID_(citizenID) : ''
   ]);
 
   return token;
@@ -1612,46 +1388,24 @@ function requireAdminSession_(token) {
 }
 
 function findSession_(token) {
-  if (!token) {
-    return null;
-  }
+  if (!token) return null;
 
-  const sheet =
-    getSheet_(CONFIG.SHEETS.SESSIONS);
-
+  const sheet = getSheet_(CONFIG.SHEETS.SESSIONS);
   const lastRow = sheet.getLastRow();
+  if (lastRow <= 1) return null;
 
-  if (lastRow <= 1) {
-    return null;
-  }
-
-  const values = sheet
-    .getRange(
-      2,
-      1,
-      lastRow - 1,
-      SESSION_HEADERS.length
-    )
-    .getValues();
-
-  const now =
-    new Date();
+  const colCount = Math.max(SESSION_HEADERS.length, sheet.getLastColumn());
+  const values = sheet.getRange(2, 1, lastRow - 1, colCount).getValues();
+  const now = new Date();
 
   for (let i = 0; i < values.length; i++) {
     if (
       String(values[i][0]) === token &&
-      (
-        values[i][6] === true ||
-        String(values[i][6]).toLowerCase() === 'true'
-      )
+      (values[i][6] === true || String(values[i][6]).toLowerCase() === 'true')
     ) {
-      const expires =
-        new Date(values[i][5]);
+      const expires = new Date(values[i][5]);
 
-      if (
-        isNaN(expires.getTime()) ||
-        expires.getTime() <= now.getTime()
-      ) {
+      if (isNaN(expires.getTime()) || expires.getTime() <= now.getTime()) {
         sheet.getRange(i + 2, 7).setValue(false);
         return null;
       }
@@ -1663,7 +1417,8 @@ function findSession_(token) {
         role: String(values[i][2] || ''),
         employeeCode: String(values[i][3] || ''),
         createdAt: values[i][4],
-        expiresAt: values[i][5]
+        expiresAt: values[i][5],
+        citizenID: normalizeCitizenID_(values[i][7] || '')
       };
     }
   }
@@ -1768,13 +1523,18 @@ function normalizeCitizenID_(value) {
   let text = String(value).trim();
   text = text.replace(/^'/, '').replace(/\s+/g, '');
 
-  // Never pad/truncate. A valid CitizenID must already be exactly 12 digits.
+  if (/^\d+\.0+$/.test(text)) {
+    text = text.substring(0, text.indexOf('.'));
+  }
+
+  // Khong tu dong padStart nua: CCCD chi hop le khi dung 12 chu so.
   if (!/^\d{12}$/.test(text)) return '';
+
   return text;
 }
 
 function isValidCitizenID_(value) {
-  return /^\d{12}$/.test(String(value || '').trim());
+  return /^\d{12}$/.test(normalizeCitizenID_(value));
 }
 
 function numberValue_(value) {

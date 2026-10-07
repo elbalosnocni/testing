@@ -338,11 +338,6 @@ input {
     margin-bottom: 7px;
 }
 
-.payroll-source {
-    font-size: 12px;
-    opacity: 0.75;
-}
-
 .payroll-value {
     font-size: 17px;
     font-weight: 800;
@@ -767,7 +762,6 @@ th {
             <div class="payroll-label">Xem phiếu lương theo tháng</div>
             <select id="payrollMonthSelect" class="input mt-1" onchange="selectPayrollMonth(this.value)">
             </select>
-            <div id="payrollSource" class="payroll-source mt-1"></div>
         </div>
 
         <div
@@ -1040,7 +1034,7 @@ th {
 'use strict';
 
 const API_URL =
-    'https://script.google.com/macros/s/AKfycbzenFqwhLeihHWWp00noO5EK3g_buYizFpnOaNVqiVO2EdhtI_KO-RzEkSUahMst0Vapw/exec';
+    'https://script.google.com/macros/s/AKfycbyW7OjW5OJhgaw8hiqSkelERGigCZ0mRWkGvPxkSlBFpGxUAO0rKY3H--co8fpxbYH8Fw/exec';
 
 const state = {
     employeeToken: '',
@@ -1267,6 +1261,17 @@ async function handleEmployeeLogin(event) {
         return;
     }
 
+    const normalizedCitizenID =
+        normalizeCitizenID(citizenID);
+
+    if (!normalizedCitizenID) {
+        showAlert(
+            elements.loginAlert,
+            'Số Căn Cước phải gồm đúng 12 chữ số.'
+        );
+        return;
+    }
+
     try {
         setLoading(
             true,
@@ -1278,9 +1283,7 @@ async function handleEmployeeLogin(event) {
                 'login',
                 {
                     citizenID:
-                        normalizeCitizenID(
-                            citizenID
-                        ),
+                        normalizedCitizenID,
                     password:
                         password
                 }
@@ -2158,14 +2161,6 @@ function renderEmployee() {
 
     populatePayrollMonthSelect_();
 
-    const sourceElement = document.getElementById('payrollSource');
-    if (sourceElement) {
-        const source = String(payroll.Flexible || '').trim();
-        sourceElement.textContent = source
-            ? 'Nguồn dữ liệu: ' + source
-            : '';
-    }
-
     const groups = [
         {
             title: 'A. Các khoản thu nhập',
@@ -2544,15 +2539,12 @@ function normalizeCitizenID(value) {
             .replace(/^'/, '')
             .replace(/\s+/g, '');
 
-    if (
-        /^\d+$/.test(text) &&
-        text.length < 12
-    ) {
-        text =
-            text.padStart(12, '0');
+    if (/^\d+\.0+$/.test(text)) {
+        text = text.substring(0, text.indexOf('.'));
     }
 
-    return text;
+    // CCCD chi hop le khi dung 12 chu so. Khong tu dong them so 0.
+    return /^\d{12}$/.test(text) ? text : '';
 }
 
 function formatMoney(value) {
