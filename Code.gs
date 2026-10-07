@@ -45,6 +45,7 @@ const PAYROLL_HEADERS = [
   'Section',
   'Position',
   'SalaryMonth',
+  'Flexible',
 
   'BasicSalary',
   'WorkingDays',
@@ -94,6 +95,63 @@ const PAYROLL_HEADERS = [
   'UpdatedAt'
 ];
 
+
+// Destination columns are resolved by header name, not hard-coded positions.
+// To add/reorder a Payroll column: add the header here and add its field mapping
+// in PAYROLL_FIELD_MAP below. Existing data logic will follow the header order.
+const PAYROLL_COL = {};
+PAYROLL_HEADERS.forEach(function(header, index) {
+  PAYROLL_COL[header] = index;
+});
+
+const PAYROLL_FIELD_MAP = {
+  EmployeeCode: 'employeeCode',
+  FullName: 'fullName',
+  CitizenID: 'citizenID',
+  Department: 'department',
+  Section: 'section',
+  Position: 'position',
+  SalaryMonth: 'salaryMonth',
+  Flexible: 'flexible',
+  BasicSalary: 'basicSalary',
+  WorkingDays: 'workingDays',
+  HolidayDays: 'holidayDays',
+  PaidLeaveDays: 'paidLeaveDays',
+  UnpaidLeaveDays: 'unpaidLeaveDays',
+  OvertimeHours: 'overtimeHours',
+  HolidayWorkHours: 'holidayWorkHours',
+  HolidayOvertimeHours: 'holidayOvertimeHours',
+  MinimumRegionalLeaveDays: 'minimumRegionalLeaveDays',
+  NightHolidayOvertimeHours: 'nightHolidayOvertimeHours',
+  NightOvertimeHours: 'nightOvertimeHours',
+  HolidayWorkDayHours: 'holidayWorkDayHours',
+  HolidayOvertimeDayHours: 'holidayOvertimeDayHours',
+  NightShiftDays: 'nightShiftDays',
+  OtherMoney: 'otherMoney',
+  DisciplinaryMoney: 'disciplinaryMoney',
+  Loyalty2Years: 'loyalty2Years',
+  Loyalty5Years: 'loyalty5Years',
+  Loyalty10Years: 'loyalty10Years',
+  HousingAllowance: 'housingAllowance',
+  TransportationAllowance: 'transportationAllowance',
+  AttendanceBonus: 'attendanceBonus',
+  SeveranceAndUnusedLeave: 'severanceAndUnusedLeave',
+  MonthlySalary: 'monthlySalary',
+  OvertimeSalary: 'overtimeSalary',
+  CommissionAndOverTargetBonus: 'commissionAndOverTargetBonus',
+  OtherIncome: 'otherIncome',
+  OtherDeductions: 'otherDeductions',
+  AdvancePayment: 'advancePayment',
+  SocialInsurance: 'socialInsurance',
+  HealthInsurance: 'healthInsurance',
+  UnemploymentInsurance: 'unemploymentInsurance',
+  PersonalIncomeTax: 'personalIncomeTax',
+  GrossIncome: 'grossIncome',
+  NetSalary: 'netSalary',
+  NightHolidayOvertimeDayHours: 'nightHolidayOvertimeDayHours',
+  UpdatedAt: 'updatedAt'
+};
+
 const ADMIN_HEADERS = [
   'Username',
   'PasswordHash',
@@ -137,7 +195,7 @@ function doGet(e) {
   return jsonResponse_({
     success: true,
     service: 'Internal Payroll API',
-    version: '2.3-LITE',
+    version: '1.0.0',
     timestamp: nowString_()
   });
 }
@@ -305,32 +363,55 @@ function ensureSheet_(ss, name, headers) {
 
   if (!sheet) {
     sheet = ss.insertSheet(name);
-  }
-
-  if (sheet.getLastRow() === 0) {
     sheet.getRange(1, 1, 1, headers.length).setValues([headers]);
     sheet.setFrozenRows(1);
-  } else {
-    const current = sheet
-      .getRange(1, 1, 1, headers.length)
-      .getValues()[0];
+    return sheet;
+  }
 
-    let changed = false;
+  const headerWidth = Math.max(sheet.getLastColumn(), 1);
+  const currentHeaders = sheet
+    .getRange(1, 1, 1, headerWidth)
+    .getValues()[0]
+    .map(function(value) { return String(value || '').trim(); });
 
+  let same = currentHeaders.length === headers.length;
+  if (same) {
     for (let i = 0; i < headers.length; i++) {
-      if (String(current[i] || '') !== headers[i]) {
-        changed = true;
+      if (currentHeaders[i] !== headers[i]) {
+        same = false;
         break;
       }
     }
-
-    if (changed) {
-      sheet
-        .getRange(1, 1, 1, headers.length)
-        .setValues([headers]);
-    }
   }
 
+  if (same) {
+    sheet.setFrozenRows(1);
+    return sheet;
+  }
+
+  // Header-driven migration: adding/reordering a column will preserve existing
+  // values by header name instead of shifting data into the wrong field.
+  const lastRow = sheet.getLastRow();
+  const oldRows = lastRow > 1
+    ? sheet.getRange(2, 1, lastRow - 1, currentHeaders.length).getValues()
+    : [];
+  const oldIndex = {};
+  currentHeaders.forEach(function(header, index) {
+    if (header) oldIndex[header] = index;
+  });
+
+  const migrated = oldRows.map(function(oldRow) {
+    return headers.map(function(header) {
+      return oldIndex[header] !== undefined ? oldRow[oldIndex[header]] : '';
+    });
+  });
+
+  sheet.clearContents();
+  sheet.getRange(1, 1, 1, headers.length).setValues([headers]);
+  if (migrated.length) {
+    sheet.getRange(2, 1, migrated.length, headers.length).setValues(migrated);
+  }
+  sheet.setFrozenRows(1);
   return sheet;
 }
 
@@ -340,7 +421,7 @@ function login_(body) {
   const citizenID = normalizeCitizenID_(body.citizenID);
   const password = String(body.password || '');
 
-  if (!citizenID || !password) {
+  if (!isValidCitizenID_(citizenID) || !password) {
     return {
       success: false,
       error: 'INVALID_LOGIN'
@@ -417,7 +498,7 @@ function login_(body) {
 
   if (!employee.mustChangePassword) {
     const payrolls = getPayrollHistoryForEmployee_(
-      employee.employeeCode
+      employee.citizenID
     );
     response.payrolls = payrolls;
     response.payroll = payrolls.length ? payrolls[0] : null;
@@ -561,7 +642,7 @@ function getPayroll_(body) {
   }
 
   const payrolls = getPayrollHistoryForEmployee_(
-    employee.employeeCode
+    employee.citizenID
   );
 
   return {
@@ -943,13 +1024,14 @@ function syncPayroll_(body) {
 
     const payrollRows = [];
 
-    // Enforce one payslip per EmployeeCode + SalaryMonth.
-    // If the same employee appears more than once in the incoming files,
-    // the last record is used instead of creating duplicate payslips.
+    // CCCD is the business key. Only exactly 12 numeric digits are accepted.
+    // Duplicate records in the same month are collapsed by CCCD.
     const uniqueRecords = {};
     records.forEach(function(record) {
-      const code = String(record.employeeCode || '').trim();
-      if (code) uniqueRecords[code.toUpperCase()] = record;
+      const citizenID = normalizeCitizenID_(record.citizenID);
+      if (isValidCitizenID_(citizenID)) {
+        uniqueRecords[citizenID] = record;
+      }
     });
 
     let employeeCount = 0;
@@ -965,7 +1047,7 @@ function syncPayroll_(body) {
       const citizenID =
         normalizeCitizenID_(record.citizenID);
 
-      if (!employeeCode || !fullName) {
+      if (!employeeCode || !fullName || !isValidCitizenID_(citizenID)) {
         return;
       }
 
@@ -975,7 +1057,8 @@ function syncPayroll_(body) {
         citizenID: citizenID,
         department: String(record.department || ''),
         section: String(record.section || ''),
-        position: String(record.position || '')
+        position: String(record.position || ''),
+        flexible: String(record.flexible || '').trim() || 'Snack'
       };
 
       upsertEmployee_(
@@ -1061,11 +1144,7 @@ function syncPayroll_(body) {
   }
 }
 
-function payrollRecordToRow_(
-  record,
-  month,
-  employee
-) {
+function payrollRecordToRow_(record, month, employee) {
   // Excel khong co cot OtherIncome rieng. Muc III la tong cac subgroup.
   const otherIncome =
     numberValue_(record.otherMoney) +
@@ -1079,62 +1158,19 @@ function payrollRecordToRow_(
     numberValue_(record.commissionAndOverTargetBonus) +
     numberValue_(record.severanceAndUnusedLeave);
 
-  return [
-    employee.employeeCode,
-    employee.fullName,
-    employee.citizenID,
-    employee.department,
-    employee.section,
-    employee.position,
-    month,
+  const data = Object.assign({}, record, employee, {
+    salaryMonth: month,
+    otherIncome: otherIncome,
+    updatedAt: nowString_()
+  });
 
-    numberValue_(record.basicSalary),
-    numberValue_(record.workingDays),
-    numberValue_(record.holidayDays),
-    numberValue_(record.paidLeaveDays),
-    numberValue_(record.unpaidLeaveDays),
-
-    numberValue_(record.overtimeHours),
-    numberValue_(record.holidayWorkHours),
-    numberValue_(record.holidayOvertimeHours),
-
-    numberValue_(record.minimumRegionalLeaveDays),
-    numberValue_(record.nightHolidayOvertimeHours),
-    numberValue_(record.nightOvertimeHours),
-
-    numberValue_(record.holidayWorkDayHours),
-    numberValue_(record.holidayOvertimeDayHours),
-    numberValue_(record.nightShiftDays),
-
-    numberValue_(record.otherMoney),
-    numberValue_(record.disciplinaryMoney),
-    numberValue_(record.loyalty2Years),
-    numberValue_(record.loyalty5Years),
-    numberValue_(record.loyalty10Years),
-    numberValue_(record.housingAllowance),
-    numberValue_(record.transportationAllowance),
-    numberValue_(record.attendanceBonus),
-    numberValue_(record.severanceAndUnusedLeave),
-
-    numberValue_(record.monthlySalary),
-    numberValue_(record.overtimeSalary),
-    numberValue_(record.commissionAndOverTargetBonus),
-    otherIncome,
-
-    numberValue_(record.otherDeductions),
-    numberValue_(record.advancePayment),
-
-    numberValue_(record.socialInsurance),
-    numberValue_(record.healthInsurance),
-    numberValue_(record.unemploymentInsurance),
-    numberValue_(record.personalIncomeTax),
-
-    numberValue_(record.grossIncome),
-    numberValue_(record.netSalary),
-    numberValue_(record.nightHolidayOvertimeDayHours),
-
-    nowString_()
-  ];
+  return PAYROLL_HEADERS.map(function(header) {
+    const key = PAYROLL_FIELD_MAP[header];
+    if (!key) return '';
+    return data[key] !== undefined && data[key] !== null
+      ? data[key]
+      : '';
+  });
 }
 
 function deletePayrollMonth_(month) {
@@ -1152,7 +1188,7 @@ function deletePayrollMonth_(month) {
   let removed = 0;
 
   values.forEach(function(row) {
-    if (normalizeSalaryMonth_(row[6]) === targetMonth) {
+    if (normalizeSalaryMonth_(row[PAYROLL_COL.SalaryMonth]) === targetMonth) {
       removed++;
     } else {
       kept.push(row);
@@ -1176,7 +1212,7 @@ function upsertEmployee_(
   employee
 ) {
   const existing =
-    index[employee.employeeCode];
+    index[employee.citizenID];
 
   if (!existing) {
     const passwordData =
@@ -1184,6 +1220,7 @@ function upsertEmployee_(
         employee.employeeCode
       );
 
+    sheet.getRange(2, 3, Math.max(1, sheet.getMaxRows() - 1), 1).setNumberFormat('@');
     sheet.appendRow([
       employee.employeeCode,
       employee.fullName,
@@ -1201,6 +1238,7 @@ function upsertEmployee_(
     return;
   }
 
+  sheet.getRange(existing.row, 3).setNumberFormat('@');
   sheet
     .getRange(existing.row, 1, 1, 6)
     .setValues([[
@@ -1246,9 +1284,10 @@ function readEmployeeIndex_() {
       return;
     }
 
-    result[employeeCode] = {
-      row: index + 2
-    };
+    const citizenID = normalizeCitizenID_(row[2]);
+    if (isValidCitizenID_(citizenID)) {
+      result[citizenID] = { row: index + 2 };
+    }
   });
 
   return result;
@@ -1381,43 +1420,63 @@ function readEmployees_() {
   });
 }
 
-function getPayrollHistoryForEmployee_(employeeCode) {
+function columnNumberToLetter_(columnNumber) {
+  let n = Number(columnNumber);
+  let result = '';
+  while (n > 0) {
+    const remainder = (n - 1) % 26;
+    result = String.fromCharCode(65 + remainder) + result;
+    n = Math.floor((n - 1) / 26);
+  }
+  return result;
+}
+
+function getPayrollHistoryForEmployee_(citizenID) {
+  const normalized = normalizeCitizenID_(citizenID);
+  if (!isValidCitizenID_(normalized)) return [];
+
   const sheet = getSheet_(CONFIG.SHEETS.PAYROLL);
   const lastRow = sheet.getLastRow();
+  if (lastRow <= 1) return [];
 
-  if (lastRow <= 1) {
-    return [];
-  }
+  // Search only the CitizenID column. This avoids reading all 40+ columns
+  // for every login and scales much better as 10 years of history accumulate.
+  const citizenColumn = PAYROLL_COL.CitizenID + 1;
+  const range = sheet.getRange(2, citizenColumn, lastRow - 1, 1);
+  const finder = range.createTextFinder(normalized)
+    .matchEntireCell(true)
+    .useRegularExpression(false);
+  const matches = finder.findAll();
 
-  const values = sheet.getRange(2, 1, lastRow - 1, PAYROLL_HEADERS.length).getValues();
+  if (!matches.length) return [];
+
+  const a1s = matches.map(function(cell) {
+    const lastColumnLetter = columnNumberToLetter_(sheet.getLastColumn());
+    return 'A' + cell.getRow() + ':' +
+      lastColumnLetter + cell.getRow();
+  });
+  const ranges = sheet.getRangeList(a1s).getRanges();
   const result = [];
   const seen = new Set();
 
-  for (let i = 0; i < values.length; i++) {
-    if (String(values[i][0] || '').trim() !== String(employeeCode || '').trim()) {
-      continue;
-    }
-
-    const item = payrollRowToObject_(values[i]);
+  ranges.forEach(function(range) {
+    const row = range.getValues()[0];
+    const item = payrollRowToObject_(row);
     const month = normalizeSalaryMonth_(item.SalaryMonth);
-    const key = String(employeeCode || '').trim().toUpperCase() + '|' + month;
-
-    // One payslip per employee per month. If old duplicate rows exist,
-    // keep only one in the history response.
-    if (seen.has(key)) continue;
+    const key = normalized + '|' + month;
+    if (seen.has(key)) return;
     seen.add(key);
     result.push(item);
-  }
+  });
 
   result.sort(function(a, b) {
     return salaryMonthSortKey_(b.SalaryMonth) - salaryMonthSortKey_(a.SalaryMonth);
   });
-
   return result;
 }
 
-function getLatestPayrollForEmployee_(employeeCode) {
-  const history = getPayrollHistoryForEmployee_(employeeCode);
+function getLatestPayrollForEmployee_(citizenID) {
+  const history = getPayrollHistoryForEmployee_(citizenID);
   return history.length ? history[0] : null;
 }
 
@@ -1704,41 +1763,18 @@ function verifyPassword_(
 }
 
 function normalizeCitizenID_(value) {
-  if (
-    value === null ||
-    value === undefined ||
-    value === ''
-  ) {
-    return '';
-  }
+  if (value === null || value === undefined || value === '') return '';
 
-  let text =
-    String(value).trim();
+  let text = String(value).trim();
+  text = text.replace(/^'/, '').replace(/\s+/g, '');
 
-  if (
-    /^\d+\.0+$/.test(text)
-  ) {
-    text =
-      text.substring(
-        0,
-        text.indexOf('.')
-      );
-  }
-
-  text =
-    text.replace(/^'/, '');
-
-  text =
-    text.replace(/\s+/g, '');
-
-  if (/^\d+$/.test(text)) {
-    if (text.length < 12) {
-      text =
-        text.padStart(12, '0');
-    }
-  }
-
+  // Never pad/truncate. A valid CitizenID must already be exactly 12 digits.
+  if (!/^\d{12}$/.test(text)) return '';
   return text;
+}
+
+function isValidCitizenID_(value) {
+  return /^\d{12}$/.test(String(value || '').trim());
 }
 
 function numberValue_(value) {

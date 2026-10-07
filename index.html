@@ -338,6 +338,11 @@ input {
     margin-bottom: 7px;
 }
 
+.payroll-source {
+    font-size: 12px;
+    opacity: 0.75;
+}
+
 .payroll-value {
     font-size: 17px;
     font-weight: 800;
@@ -762,6 +767,7 @@ th {
             <div class="payroll-label">Xem phiếu lương theo tháng</div>
             <select id="payrollMonthSelect" class="input mt-1" onchange="selectPayrollMonth(this.value)">
             </select>
+            <div id="payrollSource" class="payroll-source mt-1"></div>
         </div>
 
         <div
@@ -1034,7 +1040,7 @@ th {
 'use strict';
 
 const API_URL =
-    'https://script.google.com/macros/s/AKfycbzenFqwhLeihHWWp00noO5EK3g_buYizFpnOaNVqiVO2EdhtI_KO-RzEkSUahMst0Vapw/exec';
+    'https://script.google.com/macros/s/AKfycbyW7OjW5OJhgaw8hiqSkelERGigCZ0mRWkGvPxkSlBFpGxUAO0rKY3H--co8fpxbYH8Fw/exec';
 
 const state = {
     employeeToken: '',
@@ -2151,6 +2157,14 @@ function renderEmployee() {
     const payroll = state.payroll;
 
     populatePayrollMonthSelect_();
+
+    const sourceElement = document.getElementById('payrollSource');
+    if (sourceElement) {
+        const source = String(payroll.Flexible || '').trim();
+        sourceElement.textContent = source
+            ? 'Nguồn dữ liệu: ' + source
+            : '';
+    }
 
     const groups = [
         {
