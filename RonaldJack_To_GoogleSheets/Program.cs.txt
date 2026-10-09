@@ -1,0 +1,144 @@
+using System;
+using System.Collections.Concurrent;
+using System.Collections.Generic;
+using System.Net.Http;
+using System.Text;
+using System.Threading.Tasks;
+using System.Text.Json;
+using zkemkeeper;
+
+namespace RonaldJackToGoogleSheets
+{
+    class MachineInfo
+    {
+        public string Name { get; set; }
+        public string IP { get; set; }
+        public int Port { get; set; } = 4370;
+        public int Id { get; set; } = 1;
+    }
+
+    class AttendanceRecord
+    {
+        public string MachineName { get; set; }
+        public string UserID { get; set; }
+        public string DateTimeCheck { get; set; }
+        public string CheckType { get; set; }
+    }
+
+    class Program
+    {
+        // Google Web App URL do người dùng cung cấp
+        private static readonly string GoogleScriptUrl = "https://script.google.com/macros/s/AKfycbz_qDgGg-iEfVDmyzf-YzNrr8720YsYDXorpD7xP_C8ptGB-GQchpzI4tXelr86VMhaZA/exec";
+
+        static async Task Main(string[] args)
+        {
+            // Danh sách 8 máy chấm công cấu hình theo yêu cầu của bạn
+            List<MachineInfo> machineList = new List<MachineInfo>()
+            {
+                new MachineInfo { Name = "X1", IP = "192.168.12.156", Port = 4370, Id = 1 },
+                new MachineInfo { Name = "X2", IP = "192.168.12.155", Port = 4370, Id = 2 },
+                new MachineInfo { Name = "X3", IP = "192.168.12.154", Port = 4370, Id = 3 },
+                new MachineInfo { Name = "X4", IP = "192.168.12.167", Port = 4370, Id = 4 },
+                new MachineInfo { Name = "X5", IP = "192.168.12.157", Port = 4370, Id = 5 },
+                new MachineInfo { Name = "VP", IP = "192.168.12.165", Port = 4370, Id = 6 },
+                new MachineInfo { Name = "VP2", IP = "192.168.3.101", Port = 4370, Id = 8 },
+                new MachineInfo { Name = "HCM", IP = "118.69.188.154", Port = 4370, Id = 9 }
+            };
+
+            ConcurrentBag<AttendanceRecord> allRecords = new ConcurrentBag<AttendanceRecord>();
+
+            Console.WriteLine("--- BAT DAU QUET DU LIEU TU 8 MAY CHAM CONG ---");
+
+            Parallel.ForEach(machineList, machine =>
+            {
+                CZKEM axCZKEM = new CZKEM();
+                Console.WriteLine($"[{machine.Name}] Dang ket noi toi IP: {machine.IP}...");
+                
+                // Kết nối qua giao thức TCP/IP mạng LAN/WAN
+                if (axCZKEM.Connect_Net(machine.IP, machine.Port))
+                {
+                    Console.WriteLine($"[{machine.Name}] Ket noi THANH CONG.");
+                    
+                    // Đọc dữ liệu từ bộ nhớ máy chấm công vào RAM của thư viện
+                    if (axCZKEM.ReadGeneralLogData(machine.Id))
+                    {
+                        string enrollNumber = "";
+                        int verifyMode = 0, inOutMode = 0;
+                        int year = 0, month = 0, day = 0, hour = 0, minute = 0, second = 0;
+                        int workCode = 0;
+                        int count = 0;
+
+                        while (axCZKEM.SSR_GetGeneralLogData(machine.Id, out enrollNumber, out verifyMode, 
+                               out inOutMode, out year, out month, out day, out hour, out minute, out second, ref workCode))
+                        {
+                            string fullDateTime = $"{day:D2}/{month:D2}/{year} {hour:D2}:{minute:D2}:{second:D2}";
+                            string type = (inOutMode == 0) ? "Vao" : (inOutMode == 1 ? "Ra" : "Khac");
+
+                            allRecords.Add(new AttendanceRecord
+                            {
+                                MachineName = machine.Name,
+                                UserID = enrollNumber,
+                                DateTimeCheck = fullDateTime,
+                                CheckType = type
+                            });
+                            count++;
+                        }
+                        Console.WriteLine($"[{machine.Name}] Da lay xong {count} dong du lieu.");
+                    }
+                    else
+                    {
+                        Console.WriteLine($"[{machine.Name}] Khong co du lieu moi hoac loi doc log.");
+                    }
+                    axCZKEM.Disconnect();
+                }
+                else
+                {
+                    Console.WriteLine($"[LOI] KHONG THE KET NOI toi {machine.Name} ({machine.IP})");
+                }
+            });
+
+            // Gửi dữ liệu thu thập được lên Google Sheets
+            if (allRecords.Count > 0)
+            {
+                Console.WriteLine($"\nDang dong bo {allRecords.Count} dong du lieu len Google Sheets...");
+                await SendToGoogleSheets(allRecords);
+            }
+            else
+            {
+                Console.WriteLine("\nKhong co du lieu nao duoc quet de dong bo.");
+            }
+
+            Console.WriteLine("\nTien trinh ket thuc. An phim bat ky de thoat...");
+            Console.ReadKey();
+        }
+
+        static async Task SendToGoogleSheets(ConcurrentBag<AttendanceRecord> records)
+        {
+            using (HttpClient client = new HttpClient())
+            {
+                try
+                {
+                    string jsonPayload = JsonSerializer.Serialize(records);
+                    var content = new StringContent(jsonPayload, Encoding.UTF8, "application/json");
+
+                    HttpResponseMessage response = await client.PostAsync(GoogleScriptUrl, content);
+                    
+                    if (response.IsSuccessStatusCode)
+                    {
+                        string responseResult = await response.Content.ReadAsStringAsync();
+                        Console.WriteLine("[THANH CONG] Du lieu da hiển thị tren Google Sheets!");
+                        Console.WriteLine($"Phan hoi tu Google: {responseResult}");
+                    }
+                    else
+                    {
+                        Console.WriteLine($"[LOI HTTP] Ma loi: {response.StatusCode}");
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"[LOI HE THONG] Khong the gui du lieu toi Google: {ex.Message}");
+                }
+            }
+        }
+    }
+}
