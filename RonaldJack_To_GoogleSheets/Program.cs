@@ -2,7 +2,7 @@ using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.IO;
-using System.Net.Http;
+using System.Net;
 using System.Text;
 using System.Threading.Tasks;
 using zkemkeeper;
@@ -27,23 +27,28 @@ namespace RonaldJackFlex
 
     class Program
     {
-        static string GoogleScriptUrl = "https://script.google.com/macros/s/AKfycbz_qDgGg-iEfVDmyzf-YzNrr8720YsYDXorpD7xP_C8ptGB-GQchpzI4tXelr86VMhaZA/exec";
+        static string GoogleScriptUrl = "";
         static List<MachineInfo> machineList = new List<MachineInfo>();
 
         static void Main(string[] args)
         {
             Console.OutputEncoding = Encoding.UTF8;
-            if (!LoadConfig()) { Console.ReadKey(); return; }
+            
+            if (!LoadConfig()) { 
+                Console.WriteLine("Nhấn phím bất kỳ để thoát...");
+                Console.ReadKey(); 
+                return; 
+            }
 
             ConcurrentBag<AttendanceRecord> allRecords = new ConcurrentBag<AttendanceRecord>();
-            Console.WriteLine("--- BẮT ĐẦU KẾT NỐI ĐA LUỒNG ---");
+            Console.WriteLine("--- BẮT ĐẦU KẾT NỐI ĐA LUỒNG TỚI CÁC MÁY CHẤM CÔNG ---");
 
             Parallel.ForEach(machineList, machine =>
             {
                 CZKEM axCZKEM = new CZKEM();
                 if (axCZKEM.Connect_Net(machine.IP, machine.Port))
                 {
-                    Console.WriteLine($"[{machine.Name}] Kết nối thành công.");
+                    Console.WriteLine(string.Format("[{0}] Kết nối thành công tới IP {1}.", machine.Name, machine.IP));
                     if (axCZKEM.ReadGeneralLogData(machine.Id))
                     {
                         string enrollNumber = "";
@@ -53,34 +58,39 @@ namespace RonaldJackFlex
                         while (axCZKEM.SSR_GetGeneralLogData(machine.Id, out enrollNumber, out verifyMode, 
                                out inOutMode, out year, out month, out day, out hour, out minute, out second, ref workCode))
                         {
+                            string fullTime = string.Format("{0:D2}/{1:D2}/{2} {3:D2}:{4:D2}:{5:D2}", day, month, year, hour, minute, second);
+                            string type = (inOutMode == 0) ? "Vào" : (inOutMode == 1 ? "Ra" : "Khác");
+
                             allRecords.Add(new AttendanceRecord
                             {
                                 MachineName = machine.Name,
                                 UserID = enrollNumber,
-                                DateTimeCheck = $"{day:D2}/{month:D2}/{year} {hour:D2}:{minute:D2}:{second:D2}",
-                                CheckType = (inOutMode == 0) ? "Vào" : (inOutMode == 1 ? "Ra" : "Khác")
+                                DateTimeCheck = fullTime,
+                                CheckType = type
                             });
                         }
                     }
                     axCZKEM.Disconnect();
+                    Console.WriteLine(string.Format("[{0}] Đã hoàn tất tải dữ liệu và ngắt kết nối.", machine.Name));
                 }
                 else
                 {
-                    Console.WriteLine($"[LỖI] Thất bại khi kết nối tới {machine.Name} ({machine.IP})");
+                    Console.WriteLine(string.Format("[LỖI] Không thể kết nối tới máy [{0}] tại địa chỉ IP: {1}", machine.Name, machine.IP));
                 }
             });
 
             if (allRecords.Count > 0)
             {
-                Console.WriteLine($"\nĐang đẩy {allRecords.Count} dòng lên Google Sheets...");
-                Task.Run(() => SendToGoogle(allRecords)).Wait();
+                Console.WriteLine(string.Format("\nĐang tiến hành đồng bộ {0} dữ liệu lên Google Sheets...", allRecords.Count));
+                SendToGoogle(allRecords);
             }
             else
             {
-                Console.WriteLine("Không có dữ liệu mới.");
+                Console.WriteLine("\nKhông quét được dữ liệu chấm công mới nào từ các thiết bị.");
             }
 
-            Console.WriteLine("\nHoàn tất tiến trình. Nhấn phím bất kỳ để đóng...");
+            Console.WriteLine("\n=== TOÀN BỘ TIẾN TRÌNH HOÀN TẤT ===");
+            Console.WriteLine("Nhấn phím bất kỳ để đóng cửa sổ...");
             Console.ReadKey();
         }
 
@@ -89,56 +99,115 @@ namespace RonaldJackFlex
             string configPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "config.txt");
             if (!File.Exists(configPath))
             {
-                Console.WriteLine("Lỗi: Không tìm thấy file config.txt!");
+                Console.WriteLine("[LỖI] Không tìm thấy tệp cấu hình 'config.txt' nằm chung thư mục!");
                 return false;
             }
 
-            foreach (var line in File.ReadAllLines(configPath))
+            try
             {
-                string trimmed = line.Trim();
-                if (string.IsNullOrEmpty(trimmed) || trimmed.StartsWith("#")) continue;
+                foreach (var line in File.ReadAllLines(configPath))
+                {
+                    string trimmed = line.Trim();
+                    if (string.IsNullOrEmpty(trimmed) || trimmed.StartsWith("#")) continue;
 
-                if (trimmed.StartsWith("URL="))
-                {
-                    GoogleScriptUrl = trimmed.Substring(4);
-                }
-                else if (trimmed.StartsWith("MÁY="))
-                {
-                    var parts = trimmed.Substring(4).Split('|');
-                    if (parts.Length == 4)
+                    if (trimmed.StartsWith("URL="))
                     {
-                        machineList.Add(new MachineInfo {
-                            Name = parts[0], Id = int.Parse(parts[1]), IP = parts[2], Port = int.Parse(parts[3])
-                        });
+                        GoogleScriptUrl = trimmed.Substring(4).Trim();
+                    }
+                    else if (trimmed.StartsWith("MÁY="))
+                    {
+                        var parts = trimmed.Substring(4).Split('|');
+                        if (parts.Length == 4)
+                        {
+                            machineList.Add(new MachineInfo
+                            {
+                                Name = parts[0].Trim(),
+                                Id = int.Parse(parts[1].Trim()),
+                                IP = parts[2].Trim(),
+                                Port = int.Parse(parts[3].Trim())
+                            });
+                        }
                     }
                 }
             }
-            return !string.IsNullOrEmpty(GoogleScriptUrl) && machineList.Count > 0;
+            catch (Exception ex)
+            {
+                Console.WriteLine(string.Format("[LỖI] Định dạng dữ liệu trong file config.txt không hợp lệ: {0}", ex.Message));
+                return false;
+            }
+
+            if (string.IsNullOrEmpty(GoogleScriptUrl))
+            {
+                Console.WriteLine("[LỖI] Chưa cấu hình đường dẫn URL của Google Web App trong config.txt!");
+                return false;
+            }
+            if (machineList.Count == 0)
+            {
+                Console.WriteLine("[LỖI] Danh sách máy chấm công trong config.txt đang trống!");
+                return false;
+            }
+
+            return true;
         }
 
-        static async Task SendToGoogle(ConcurrentBag<AttendanceRecord> records)
+        // Hàm hỗ trợ mã hóa chuỗi JSON an toàn, loại bỏ ký tự điều khiển lỗi
+        static string EscapeJson(string s)
         {
-            using (HttpClient client = new HttpClient())
+            if (string.IsNullOrEmpty(s)) return "";
+            StringBuilder sb = new StringBuilder();
+            foreach (char c in s)
+            {
+                switch (c)
+                {
+                    case '\"': sb.Append("\\\""); break;
+                    case '\\': sb.Append("\\\\"); break;
+                    case '\b': sb.Append("\\b"); break;
+                    case '\f': sb.Append("\\f"); break;
+                    case '\n': sb.Append("\\n"); break;
+                    case '\r': sb.Append("\\r"); break;
+                    case '\t': sb.Append("\\t"); break;
+                    default:
+                        if (c < ' ') {
+                            // Bỏ qua hoặc biến thành khoảng trắng đối với ký tự điều khiển không hợp lệ
+                            sb.Append(" ");
+                        } else {
+                            sb.Append(c);
+                        }
+                        break;
+                }
+            }
+            return sb.ToString();
+        }
+
+        static void SendToGoogle(ConcurrentBag<AttendanceRecord> records)
+        {
+            using (WebClient client = new WebClient())
             {
                 try
                 {
-                    // Tự dựng chuỗi JSON đơn giản để không cần cài thêm thư viện phụ trợ bên ngoài
+                    client.Encoding = Encoding.UTF8;
+                    client.Headers[HttpRequestHeader.ContentType] = "application/json";
+
                     StringBuilder json = new StringBuilder("[");
                     foreach (var r in records)
                     {
-                        json.Append($"{{\"MachineName\":\"{r.MachineName}\",\"UserID\":\"{r.UserID}\",\"DateTimeCheck\":\"{r.DateTimeCheck}\",\"CheckType\":\"{r.CheckType}\"}},");
+                        json.Append("{");
+                        json.Append("\"MachineName\":\"" + EscapeJson(r.MachineName) + "\",");
+                        json.Append("\"UserID\":\"" + EscapeJson(r.UserID) + "\",");
+                        json.Append("\"DateTimeCheck\":\"" + EscapeJson(r.DateTimeCheck) + "\",");
+                        json.Append("\"CheckType\":\"" + EscapeJson(r.CheckType) + "\"");
+                        json.Append("},");
                     }
-                    if (json.Length > 1) json.Length--; // Bỏ dấu phẩy cuối
+                    if (json.Length > 1) json.Length--;
                     json.Append("]");
 
-                    var content = new StringContent(json.ToString(), Encoding.UTF8, "application/json");
-                    HttpResponseMessage response = await client.PostAsync(GoogleScriptUrl, content);
-                    if (response.IsSuccessStatusCode)
-                        Console.WriteLine("[THÀNH CÔNG] Dữ liệu đã hiển thị trên Google Sheet!");
-                    else
-                        Console.WriteLine($"[LỖI] HTTP Status: {response.StatusCode}");
+                    string response = client.UploadString(GoogleScriptUrl, "POST", json.ToString());
+                    Console.WriteLine(string.Format("[THÀNH CÔNG] Đồng bộ hoàn tất! Phản hồi từ Google: {0}", response));
                 }
-                catch (Exception ex) { Console.WriteLine($"[LỖI HỆ THỐNG]: {ex.Message}"); }
+                catch (Exception ex)
+                {
+                    Console.WriteLine(string.Format("[LỖI HỆ THỐNG] Trục trặc đường truyền tới Google: {0}", ex.Message));
+                }
             }
         }
     }
