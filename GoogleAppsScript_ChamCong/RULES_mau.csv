@@ -1,0 +1,23 @@
+Tham So,Gia Tri,Mo Ta
+TRE_SOM_NGUONG_PHUT,10,Tu du 10 phut
+TRE_SOM_TRU_CONG_PHUT,30,Muc co ban
+TRE_SOM_LAM_TRON_TU_PHUT,40,Tren 40 phut tinh 60
+AN_QUA_BIEN_BAN_TU_PHUT,5,Qua tren 5 phut lap bien ban
+AN_QUA_TRU_CONG_TU_PHUT,10,Tu du 10 phut tinh tru cong
+AN_QUA_LAM_TRON_TU_PHUT,45,Tren 45 phut tinh 60
+AN_QUA_TRU_CO_BAN_PHUT,30,Tu 10 den 45 phut tru 30
+DUPLICATE_SECONDS,2,Quet cach nhau <= 2 giay nghi trung
+WINDOW1_START,08:30,Ca 1/Hanh chinh
+WINDOW1_END,13:00,Ca 1/Hanh chinh
+WINDOW1_ALLOWED_MIN,30,Phut nghi cho phep
+WINDOW2_START,15:30,Ca 2
+WINDOW2_END,19:00,Ca 2
+WINDOW2_ALLOWED_MIN,30,Phut nghi cho phep
+WINDOW3_START,20:30,Phu
+WINDOW3_END,23:00,Phu
+WINDOW3_ALLOWED_MIN,30,Phut nghi cho phep
+WINDOW4_START,00:30,Ca 3
+WINDOW4_END,04:30,Ca 3 qua dem
+WINDOW4_ALLOWED_MIN,45,Phut nghi cho phep
+AUTO_APPEND_LEGACY_REPORTS,YES,Bo sung tab cu neu co
+TIMEZONE,Asia/Ho_Chi_Minh,Mui gio
