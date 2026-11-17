@@ -34,7 +34,8 @@ const EMPLOYEE_HEADERS = [
   'PasswordSalt',
   'MustChangePassword',
   'Active',
-  'UpdatedAt'
+  'UpdatedAt',
+  'PhoneNumber'
 ];
 
 const PAYROLL_HEADERS = [
@@ -109,8 +110,7 @@ const SESSION_HEADERS = [
   'EmployeeCode',
   'CreatedAt',
   'ExpiresAt',
-  'Active',
-  'CitizenID'
+  'Active'
 ];
 
 const AUDIT_HEADERS = [
@@ -138,7 +138,7 @@ function doGet(e) {
   return jsonResponse_({
     success: true,
     service: 'Internal Payroll API',
-    version: '1.0.0',
+    version: '1.1.0',
     timestamp: nowString_()
   });
 }
@@ -162,6 +162,12 @@ function doPost(e) {
 
       case 'changePassword':
         return jsonResponse_(changePassword_(body));
+
+      case 'requestPasswordResetOtp':
+        return jsonResponse_(requestPasswordResetOtp_(body));
+
+      case 'verifyPasswordResetOtp':
+        return jsonResponse_(verifyPasswordResetOtp_(body));
 
       case 'getPayroll':
         return jsonResponse_(getPayroll_(body));
@@ -266,7 +272,9 @@ function setup_(body) {
 function ensureSystem_() {
   const ss = SpreadsheetApp.openById(CONFIG.SPREADSHEET_ID);
 
-  ensureSheet_(ss, CONFIG.SHEETS.EMPLOYEES, EMPLOYEE_HEADERS);
+  const employeeSheet = ensureSheet_(ss, CONFIG.SHEETS.EMPLOYEES, EMPLOYEE_HEADERS);
+  // Keep phone numbers as text so the leading zero is never lost.
+  employeeSheet.getRange(2, 12, Math.max(1, employeeSheet.getMaxRows() - 1), 1).setNumberFormat('@');
   ensureSheet_(ss, CONFIG.SHEETS.PAYROLL, PAYROLL_HEADERS);
   const adminSheet = ensureSheet_(ss, CONFIG.SHEETS.ADMINS, ADMIN_HEADERS);
   ensureSheet_(ss, CONFIG.SHEETS.SESSIONS, SESSION_HEADERS);
@@ -390,8 +398,7 @@ function login_(body) {
 
   const token = createSession_(
     employee.employeeCode,
-    'EMPLOYEE',
-    employee.citizenID
+    'EMPLOYEE'
   );
 
   writeAudit_(
@@ -419,13 +426,233 @@ function login_(body) {
 
   if (!employee.mustChangePassword) {
     const payrolls = getPayrollHistoryForEmployee_(
-      employee.citizenID
+      employee.employeeCode
     );
     response.payrolls = payrolls;
     response.payroll = payrolls.length ? payrolls[0] : null;
   }
 
   return response;
+}
+
+
+function normalizePhoneNumber_(value) {
+  if (value === null || value === undefined || value === '') return '';
+
+  let text = String(value).trim().replace(/^'/, '');
+  // Remove Excel's trailing decimal suffix for numeric cells.
+  text = text.replace(/\.0+$/, '');
+  // Keep digits only: handles spaces, dots, hyphens and parentheses.
+  text = text.replace(/\D/g, '');
+
+  // Excel stores a numeric phone as 9 digits when the leading zero was lost.
+  if (text.length === 9) text = '0' + text;
+
+  return /^0\d{9}$/.test(text) ? text : '';
+}
+
+function requestPasswordResetOtp_(body) {
+  ensureSystem_();
+
+  const employeeCode = String(body.employeeCode || '').trim();
+  const submittedPhone = normalizePhoneNumber_(body.phoneNumber);
+
+  if (!employeeCode || !submittedPhone) {
+    return { success: false, error: 'RESET_DETAILS_INVALID' };
+  }
+
+  const employee = findEmployeeByEmployeeCode_(employeeCode);
+  // Use the same response for unknown employee / wrong phone to avoid account enumeration.
+  if (!employee || !employee.active || !employee.phoneNumber ||
+      employee.phoneNumber !== submittedPhone) {
+    writeAudit_(employeeCode, 'EMPLOYEE', 'PASSWORD_RESET_OTP_REJECTED',
+      employeeCode, '', 'Reset details did not match');
+    return { success: true, message: 'IF_MATCH_OTP_SENT' };
+  }
+
+  const cache = CacheService.getScriptCache();
+  const throttleKey = 'pwd_otp_' + digestKey_(employeeCode.toUpperCase());
+  const dailyKey = 'pwd_otp_daily_' + digestKey_(employeeCode.toUpperCase());
+  if (cache.get(throttleKey)) {
+    return { success: false, error: 'OTP_RATE_LIMITED' };
+  }
+  const dailyCount = Number(cache.get(dailyKey) || 0);
+  if (dailyCount >= 5) {
+    return { success: false, error: 'OTP_DAILY_LIMIT' };
+  }
+
+  const apiKey = PropertiesService.getScriptProperties().getProperty('EASYOTP_API_KEY');
+  const apiSecret = PropertiesService.getScriptProperties().getProperty('EASYOTP_API_SECRET');
+  if (!apiKey || !apiSecret) {
+    return { success: false, error: 'OTP_PROVIDER_NOT_CONFIGURED' };
+  }
+
+  const response = UrlFetchApp.fetch('https://eotp.com.vn/api/v1/otp/send', {
+    method: 'post',
+    contentType: 'application/json',
+    headers: {
+      'X-Api-Key': apiKey,
+      'X-Api-Secret': apiSecret
+    },
+    payload: JSON.stringify({
+      phone: submittedPhone,
+      country_code: '84',
+      channel: 'sms'
+    }),
+    muteHttpExceptions: true
+  });
+
+  let result = {};
+  try {
+    result = JSON.parse(response.getContentText() || '{}');
+  } catch (error) {
+    throw new Error('OTP_PROVIDER_INVALID_RESPONSE');
+  }
+
+  if (response.getResponseCode() < 200 || response.getResponseCode() >= 300 ||
+      result.ok !== true || !result.request_id) {
+    console.error('eOTP send failed: ' + String(result.error || response.getResponseCode()));
+    return { success: false, error: 'OTP_SEND_FAILED' };
+  }
+
+  const challengeId = Utilities.getUuid().replace(/-/g, '');
+  cache.put('pwd_challenge_' + challengeId, JSON.stringify({
+    employeeCode: employee.employeeCode,
+    requestId: String(result.request_id),
+    phoneNumber: submittedPhone
+  }), 300);
+  cache.put(throttleKey, '1', 60);
+  cache.put(dailyKey, String(dailyCount + 1), 21600);
+
+  writeAudit_(employee.employeeCode, 'EMPLOYEE', 'PASSWORD_RESET_OTP_SENT',
+    employee.employeeCode, '', 'Password reset OTP requested');
+
+  return {
+    success: true,
+    message: 'IF_MATCH_OTP_SENT',
+    challengeId: challengeId,
+    expiresIn: 300,
+    resendAfter: 60
+  };
+}
+
+function verifyPasswordResetOtp_(body) {
+  ensureSystem_();
+
+  const challengeId = String(body.challengeId || '').trim();
+  const code = String(body.otp || '').trim();
+  const newPassword = String(body.newPassword || '');
+  const confirmPassword = String(body.confirmPassword || '');
+
+  if (!challengeId || !code || !newPassword || !confirmPassword) {
+    return { success: false, error: 'PASSWORD_REQUIRED' };
+  }
+  if (newPassword !== confirmPassword) {
+    return { success: false, error: 'PASSWORD_CONFIRM_MISMATCH' };
+  }
+  if (newPassword.length < 8) {
+    return { success: false, error: 'PASSWORD_TOO_SHORT' };
+  }
+
+  const cache = CacheService.getScriptCache();
+  const cacheKey = 'pwd_challenge_' + challengeId;
+  const raw = cache.get(cacheKey);
+  if (!raw) {
+    return { success: false, error: 'OTP_EXPIRED' };
+  }
+
+  const challenge = JSON.parse(raw);
+  const employee = findEmployeeByEmployeeCode_(challenge.employeeCode);
+  if (!employee || !employee.active ||
+      employee.phoneNumber !== challenge.phoneNumber) {
+    cache.remove(cacheKey);
+    return { success: false, error: 'OTP_EXPIRED' };
+  }
+
+  const apiKey = PropertiesService.getScriptProperties().getProperty('EASYOTP_API_KEY');
+  const apiSecret = PropertiesService.getScriptProperties().getProperty('EASYOTP_API_SECRET');
+  if (!apiKey || !apiSecret) {
+    return { success: false, error: 'OTP_PROVIDER_NOT_CONFIGURED' };
+  }
+
+  const response = UrlFetchApp.fetch('https://eotp.com.vn/api/v1/otp/verify', {
+    method: 'post',
+    contentType: 'application/json',
+    headers: {
+      'X-Api-Key': apiKey,
+      'X-Api-Secret': apiSecret
+    },
+    payload: JSON.stringify({
+      request_id: challenge.requestId,
+      code: code,
+      phone: challenge.phoneNumber,
+      country_code: '84'
+    }),
+    muteHttpExceptions: true
+  });
+
+  let result = {};
+  try {
+    result = JSON.parse(response.getContentText() || '{}');
+  } catch (error) {
+    throw new Error('OTP_PROVIDER_INVALID_RESPONSE');
+  }
+
+  if (response.getResponseCode() < 200 || response.getResponseCode() >= 300 ||
+      result.ok !== true || result.verified !== true) {
+    const providerError = String(result.error || '');
+    if (providerError === 'expired' || providerError === 'too_many_attempts' ||
+        providerError === 'not_found') {
+      cache.remove(cacheKey);
+    }
+    return {
+      success: false,
+      error: providerError === 'expired' ? 'OTP_EXPIRED' :
+        providerError === 'too_many_attempts' ? 'OTP_TOO_MANY_ATTEMPTS' : 'OTP_INVALID'
+    };
+  }
+
+  const passwordData = createPasswordHash_(newPassword);
+  const employeeSheet = getSheet_(CONFIG.SHEETS.EMPLOYEES);
+  employeeSheet.getRange(employee.row, 7, 1, 4).setValues([[
+    passwordData.hash,
+    passwordData.salt,
+    false,
+    true
+  ]]);
+  employeeSheet.getRange(employee.row, 11).setValue(nowString_());
+
+  // Revoke every active employee session after password recovery.
+  revokeEmployeeSessions_(employee.employeeCode);
+  cache.remove(cacheKey);
+
+  writeAudit_(employee.employeeCode, 'EMPLOYEE', 'SELF_SERVICE_PASSWORD_RESET',
+    employee.employeeCode, '', 'Password reset by verified SMS OTP');
+
+  return { success: true, message: 'PASSWORD_RESET' };
+}
+
+function revokeEmployeeSessions_(employeeCode) {
+  const sheet = getSheet_(CONFIG.SHEETS.SESSIONS);
+  const lastRow = sheet.getLastRow();
+  if (lastRow <= 1) return;
+
+  const values = sheet.getRange(2, 1, lastRow - 1, SESSION_HEADERS.length).getValues();
+  for (let i = 0; i < values.length; i++) {
+    if (String(values[i][3] || '').trim() === String(employeeCode || '').trim() &&
+        (values[i][6] === true || String(values[i][6]).toLowerCase() === 'true')) {
+      sheet.getRange(i + 2, 7).setValue(false);
+    }
+  }
+}
+
+function digestKey_(value) {
+  const bytes = Utilities.computeDigest(
+    Utilities.DigestAlgorithm.SHA_256,
+    String(value),
+    Utilities.Charset.UTF_8
+  );
+  return Utilities.base64EncodeWebSafe(bytes).replace(/=+$/g, '');
 }
 
 function changePassword_(body) {
@@ -478,9 +705,9 @@ function changePassword_(body) {
     };
   }
 
-  const employee = session.citizenID
-    ? findEmployeeByCitizenID_(session.citizenID)
-    : findEmployeeByEmployeeCode_(session.employeeCode);
+  const employee = findEmployeeByEmployeeCode_(
+    session.employeeCode
+  );
 
   if (!employee) {
     return {
@@ -544,9 +771,9 @@ function getPayroll_(body) {
     };
   }
 
-  const employee = session.citizenID
-    ? findEmployeeByCitizenID_(session.citizenID)
-    : findEmployeeByEmployeeCode_(session.employeeCode);
+  const employee = findEmployeeByEmployeeCode_(
+    session.employeeCode
+  );
 
   if (!employee) {
     return {
@@ -563,7 +790,7 @@ function getPayroll_(body) {
   }
 
   const payrolls = getPayrollHistoryForEmployee_(
-    employee.citizenID
+    employee.employeeCode
   );
 
   return {
@@ -895,47 +1122,79 @@ function adminSyncStatus_(body) {
 }
 
 function syncPayroll_(body) {
-  if (String(body.apiKey || '') !== CONFIG.SYNC_API_KEY) {
-    return { success: false, error: 'INVALID_SYNC_KEY' };
+  if (
+    String(body.apiKey || '') !==
+    CONFIG.SYNC_API_KEY
+  ) {
+    return {
+      success: false,
+      error: 'INVALID_SYNC_KEY'
+    };
   }
 
   ensureSystem_();
 
   const month = normalizeSalaryMonth_(body.salaryMonth);
-  const records = Array.isArray(body.records) ? body.records : [];
+
+  const records = Array.isArray(body.records)
+    ? body.records
+    : [];
+
   const source = body.source || {};
 
-  if (!month) return { success: false, error: 'SALARY_MONTH_REQUIRED' };
-  if (!records.length) return { success: false, error: 'NO_RECORDS' };
+  if (!month) {
+    return {
+      success: false,
+      error: 'SALARY_MONTH_REQUIRED'
+    };
+  }
+
+  if (records.length === 0) {
+    return {
+      success: false,
+      error: 'NO_RECORDS'
+    };
+  }
 
   const lock = LockService.getScriptLock();
+
   lock.waitLock(30000);
 
   try {
-    const employeeSheet = getSheet_(CONFIG.SHEETS.EMPLOYEES);
-    const payrollSheet = getSheet_(CONFIG.SHEETS.PAYROLL);
-    const existingEmployees = readEmployeeIndex_();
-    const uniqueRecords = {};
+    const employeeSheet =
+      getSheet_(CONFIG.SHEETS.EMPLOYEES);
 
-    records.forEach(function(record) {
-      const citizenID = normalizeCitizenID_(record.citizenID);
-      if (!citizenID) return;
+    const payrollSheet =
+      getSheet_(CONFIG.SHEETS.PAYROLL);
 
-      // CCCD la khoa duy nhat trong cung thang. Ma NV co the thay doi.
-      uniqueRecords[citizenID] = record;
-    });
+    const existingEmployees =
+      readEmployeeIndex_();
 
     const payrollRows = [];
+
+    // Enforce one payslip per EmployeeCode + SalaryMonth.
+    // If the same employee appears more than once in the incoming files,
+    // the last record is used instead of creating duplicate payslips.
+    const uniqueRecords = {};
+    records.forEach(function(record) {
+      const code = String(record.employeeCode || '').trim();
+      if (code) uniqueRecords[code.toUpperCase()] = record;
+    });
+
     let employeeCount = 0;
-    let skipped = 0;
 
-    Object.keys(uniqueRecords).forEach(function(citizenID) {
-      const record = uniqueRecords[citizenID];
-      const employeeCode = String(record.employeeCode || '').trim();
-      const fullName = String(record.fullName || '').trim();
+    Object.keys(uniqueRecords).forEach(function(codeKey) {
+      const record = uniqueRecords[codeKey];
+      const employeeCode =
+        String(record.employeeCode || '').trim();
 
-      if (!employeeCode || !fullName || !isValidCitizenID_(citizenID)) {
-        skipped++;
+      const fullName =
+        String(record.fullName || '').trim();
+
+      const citizenID =
+        normalizeCitizenID_(record.citizenID);
+
+      if (!employeeCode || !fullName) {
         return;
       }
 
@@ -945,42 +1204,61 @@ function syncPayroll_(body) {
         citizenID: citizenID,
         department: String(record.department || ''),
         section: String(record.section || ''),
-        position: String(record.position || '')
+        position: String(record.position || ''),
+        phoneNumber: normalizePhoneNumber_(record.phoneNumber)
       };
 
-      upsertEmployee_(employeeSheet, existingEmployees, employeeData);
+      upsertEmployee_(
+        employeeSheet,
+        existingEmployees,
+        employeeData
+      );
+
       employeeCount++;
 
       payrollRows.push(
-        payrollRecordToRow_(record, month, employeeData)
+        payrollRecordToRow_(
+          record,
+          month,
+          employeeData
+        )
       );
     });
 
-    // Chi thay the du lieu cua dung thang dang dong bo.
-    // Cac thang cu duoc giu nguyen.
     const replacedCount = deletePayrollMonth_(month);
 
     if (payrollRows.length > 0) {
       const startRow = payrollSheet.getLastRow() + 1;
-      payrollSheet.getRange(2, 7, Math.max(1, payrollSheet.getMaxRows() - 1), 1)
-        .setNumberFormat('@');
-      payrollSheet.getRange(startRow, 1, payrollRows.length, PAYROLL_HEADERS.length)
+      // Keep SalaryMonth as text so Google Sheets cannot turn 08-2026 into a Date.
+      payrollSheet.getRange(2, 7, Math.max(1, payrollSheet.getMaxRows() - 1), 1).setNumberFormat('@');
+      payrollSheet
+        .getRange(startRow, 1, payrollRows.length, PAYROLL_HEADERS.length)
         .setValues(payrollRows);
     }
 
-    const statusSheet = getSheet_(CONFIG.SHEETS.SYNC);
+    const statusSheet =
+      getSheet_(CONFIG.SHEETS.SYNC);
+
     const statusRow = statusSheet.getLastRow() + 1;
     statusSheet.getRange(statusRow, 3).setNumberFormat('@');
     statusSheet.getRange(statusRow, 1, 1, SYNC_HEADERS.length).setValues([[
-      nowString_(), 'SUCCESS', month,
-      source.snackFile || '', source.flexibleFile || '',
-      employeeCount, payrollRows.length,
-      'Payroll synchronized by CitizenID'
+      nowString_(),
+      'SUCCESS',
+      month,
+      source.snackFile || '',
+      source.flexibleFile || '',
+      employeeCount,
+      payrollRows.length,
+      'Payroll synchronized successfully'
     ]]);
 
     writeAudit_(
-      'VBA_SYNC', 'SYSTEM', 'SYNC_PAYROLL', month, '',
-      'Completed; skipped invalid CitizenID rows: ' + skipped
+      'VBA_SYNC',
+      'SYSTEM',
+      'SYNC_PAYROLL',
+      month,
+      '',
+      'Payroll synchronization completed'
     );
 
     return {
@@ -988,18 +1266,25 @@ function syncPayroll_(body) {
       month: month,
       employeeCount: employeeCount,
       payrollCount: payrollRows.length,
-      replacedCount: replacedCount,
-      skippedInvalidCitizenID: skipped
+      replacedCount: replacedCount
     };
   } catch (error) {
-    const statusSheet = getSheet_(CONFIG.SHEETS.SYNC);
+    const statusSheet =
+      getSheet_(CONFIG.SHEETS.SYNC);
+
     const errorRow = statusSheet.getLastRow() + 1;
     statusSheet.getRange(errorRow, 3).setNumberFormat('@');
     statusSheet.getRange(errorRow, 1, 1, SYNC_HEADERS.length).setValues([[
-      nowString_(), 'ERROR', month,
-      source.snackFile || '', source.flexibleFile || '',
-      0, 0, String(error.message || error)
+      nowString_(),
+      'ERROR',
+      month,
+      source.snackFile || '',
+      source.flexibleFile || '',
+      0,
+      0,
+      String(error.message || error)
     ]]);
+
     throw error;
   } finally {
     lock.releaseLock();
@@ -1115,14 +1400,20 @@ function deletePayrollMonth_(month) {
   return removed;
 }
 
-function upsertEmployee_(sheet, index, employee) {
-  const key = normalizeCitizenID_(employee.citizenID);
-  if (!key) return;
-
-  const existing = index[key];
+function upsertEmployee_(
+  sheet,
+  index,
+  employee
+) {
+  const existing =
+    index[employee.employeeCode];
 
   if (!existing) {
-    const passwordData = createPasswordHash_(employee.employeeCode);
+    const passwordData =
+      createPasswordHash_(
+        employee.employeeCode
+      );
+
     sheet.appendRow([
       employee.employeeCode,
       employee.fullName,
@@ -1134,72 +1425,139 @@ function upsertEmployee_(sheet, index, employee) {
       passwordData.salt,
       true,
       true,
-      nowString_()
+      nowString_(),
+      employee.phoneNumber || ''
     ]);
+    sheet.getRange(sheet.getLastRow(), 12).setNumberFormat('@');
+
     return;
   }
 
-  sheet.getRange(existing.row, 1, 1, 6).setValues([[
-    employee.employeeCode,
-    employee.fullName,
-    employee.citizenID,
-    employee.department,
-    employee.section,
-    employee.position
-  ]]);
-  sheet.getRange(existing.row, 11).setValue(nowString_());
+  sheet
+    .getRange(existing.row, 1, 1, 6)
+    .setValues([[
+      employee.employeeCode,
+      employee.fullName,
+      employee.citizenID,
+      employee.department,
+      employee.section,
+      employee.position
+    ]]);
+
+  sheet
+    .getRange(existing.row, 11)
+    .setValue(nowString_());
+
+  // Only replace a previously stored phone when Excel supplies a valid number.
+  // Blank/invalid source values must not erase an existing verified contact.
+  if (employee.phoneNumber) {
+    sheet.getRange(existing.row, 12).setNumberFormat('@');
+    sheet.getRange(existing.row, 12).setValue(employee.phoneNumber);
+  }
 }
 
 function readEmployeeIndex_() {
-  const sheet = getSheet_(CONFIG.SHEETS.EMPLOYEES);
+  const sheet =
+    getSheet_(CONFIG.SHEETS.EMPLOYEES);
+
   const lastRow = sheet.getLastRow();
+
   const result = {};
 
-  if (lastRow <= 1) return result;
+  if (lastRow <= 1) {
+    return result;
+  }
 
-  const values = sheet.getRange(2, 1, lastRow - 1, EMPLOYEE_HEADERS.length).getValues();
+  const values = sheet
+    .getRange(
+      2,
+      1,
+      lastRow - 1,
+      EMPLOYEE_HEADERS.length
+    )
+    .getValues();
 
   values.forEach(function(row, index) {
-    const citizenID = normalizeCitizenID_(row[2]);
-    if (!citizenID) return;
-    result[citizenID] = { row: index + 2 };
+    const employeeCode =
+      String(row[0] || '').trim();
+
+    if (!employeeCode) {
+      return;
+    }
+
+    result[employeeCode] = {
+      row: index + 2
+    };
   });
 
   return result;
 }
 
 function findEmployeeByCitizenID_(citizenID) {
-  const key = normalizeCitizenID_(citizenID);
-  if (!key) return null;
+  const sheet =
+    getSheet_(CONFIG.SHEETS.EMPLOYEES);
 
-  const sheet = getSheet_(CONFIG.SHEETS.EMPLOYEES);
   const lastRow = sheet.getLastRow();
-  if (lastRow <= 1) return null;
 
-  const values = sheet.getRange(2, 1, lastRow - 1, EMPLOYEE_HEADERS.length).getValues();
+  if (lastRow <= 1) {
+    return null;
+  }
 
-  // Duyet tu duoi len: neu lich su cu con trung CCCD,
-  // dong duoc cap nhat moi nhat se la tai khoan hien hanh.
-  for (let i = values.length - 1; i >= 0; i--) {
-    if (normalizeCitizenID_(values[i][2]) === key) {
-      return employeeFromRow_(values[i], i + 2);
+  const values = sheet
+    .getRange(
+      2,
+      1,
+      lastRow - 1,
+      EMPLOYEE_HEADERS.length
+    )
+    .getValues();
+
+  for (let i = 0; i < values.length; i++) {
+    const current =
+      normalizeCitizenID_(values[i][2]);
+
+    if (current === citizenID) {
+      return employeeFromRow_(
+        values[i],
+        i + 2
+      );
     }
   }
+
   return null;
 }
 
 function findEmployeeByEmployeeCode_(code) {
-  const sheet = getSheet_(CONFIG.SHEETS.EMPLOYEES);
-  const lastRow = sheet.getLastRow();
-  if (lastRow <= 1) return null;
+  const sheet =
+    getSheet_(CONFIG.SHEETS.EMPLOYEES);
 
-  const values = sheet.getRange(2, 1, lastRow - 1, EMPLOYEE_HEADERS.length).getValues();
+  const lastRow = sheet.getLastRow();
+
+  if (lastRow <= 1) {
+    return null;
+  }
+
+  const values = sheet
+    .getRange(
+      2,
+      1,
+      lastRow - 1,
+      EMPLOYEE_HEADERS.length
+    )
+    .getValues();
 
   for (let i = 0; i < values.length; i++) {
-    if (String(values[i][0] || '').trim() === String(code || '').trim()) {
-      return employeeFromRow_(values[i], i + 2);
+    if (
+      String(values[i][0]).trim() ===
+      String(code).trim()
+    ) {
+      return employeeFromRow_(
+        values[i],
+        i + 2
+      );
     }
   }
+
   return null;
 }
 
@@ -1214,43 +1572,78 @@ function employeeFromRow_(row, rowNumber) {
     position: String(row[5] || ''),
     passwordHash: String(row[6] || ''),
     passwordSalt: String(row[7] || ''),
-    mustChangePassword: row[8] === true || String(row[8]).toLowerCase() === 'true',
-    active: row[9] === true || String(row[9]).toLowerCase() === 'true',
-    updatedAt: String(row[10] || '')
+    mustChangePassword:
+      row[8] === true ||
+      String(row[8]).toLowerCase() === 'true',
+    active:
+      row[9] === true ||
+      String(row[9]).toLowerCase() === 'true',
+    updatedAt: String(row[10] || ''),
+    phoneNumber: normalizePhoneNumber_(row[11])
   };
 }
 
 function readEmployees_() {
-  const sheet = getSheet_(CONFIG.SHEETS.EMPLOYEES);
-  const lastRow = sheet.getLastRow();
-  if (lastRow <= 1) return [];
+  const sheet =
+    getSheet_(CONFIG.SHEETS.EMPLOYEES);
 
-  const values = sheet.getRange(2, 1, lastRow - 1, EMPLOYEE_HEADERS.length).getValues();
+  const lastRow = sheet.getLastRow();
+
+  if (lastRow <= 1) {
+    return [];
+  }
+
+  const values = sheet
+    .getRange(
+      2,
+      1,
+      lastRow - 1,
+      EMPLOYEE_HEADERS.length
+    )
+    .getValues();
 
   return values.map(function(row) {
-    return employeeFromRow_(row, 0);
+    return {
+      employeeCode: String(row[0] || ''),
+      fullName: String(row[1] || ''),
+      citizenID: normalizeCitizenID_(row[2]),
+      department: String(row[3] || ''),
+      section: String(row[4] || ''),
+      position: String(row[5] || ''),
+      mustChangePassword:
+        row[8] === true ||
+        String(row[8]).toLowerCase() === 'true',
+      active:
+        row[9] === true ||
+        String(row[9]).toLowerCase() === 'true',
+      updatedAt: String(row[10] || '')
+    };
   });
 }
 
-function getPayrollHistoryForEmployee_(citizenID) {
-  const keyCitizenID = normalizeCitizenID_(citizenID);
-  if (!keyCitizenID) return [];
-
+function getPayrollHistoryForEmployee_(employeeCode) {
   const sheet = getSheet_(CONFIG.SHEETS.PAYROLL);
   const lastRow = sheet.getLastRow();
-  if (lastRow <= 1) return [];
+
+  if (lastRow <= 1) {
+    return [];
+  }
 
   const values = sheet.getRange(2, 1, lastRow - 1, PAYROLL_HEADERS.length).getValues();
   const result = [];
   const seen = new Set();
 
   for (let i = 0; i < values.length; i++) {
-    if (normalizeCitizenID_(values[i][2]) !== keyCitizenID) continue;
+    if (String(values[i][0] || '').trim() !== String(employeeCode || '').trim()) {
+      continue;
+    }
 
     const item = payrollRowToObject_(values[i]);
     const month = normalizeSalaryMonth_(item.SalaryMonth);
-    const key = keyCitizenID + '|' + month;
+    const key = String(employeeCode || '').trim().toUpperCase() + '|' + month;
 
+    // One payslip per employee per month. If old duplicate rows exist,
+    // keep only one in the history response.
     if (seen.has(key)) continue;
     seen.add(key);
     result.push(item);
@@ -1331,27 +1724,39 @@ function payrollRowToObject_(row) {
   return result;
 }
 
-function createSession_(username, role, citizenID) {
+function createSession_(
+  username,
+  role
+) {
   const token =
     Utilities.getUuid().replace(/-/g, '') +
     Utilities.getUuid().replace(/-/g, '');
 
-  const createdAt = new Date();
-  const expiresAt = new Date(
-    createdAt.getTime() + CONFIG.SESSION_SECONDS * 1000
-  );
+  const createdAt =
+    new Date();
 
-  const employeeCode = role === 'EMPLOYEE' ? username : '';
+  const expiresAt =
+    new Date(
+      createdAt.getTime() +
+      CONFIG.SESSION_SECONDS * 1000
+    );
 
-  getSheet_(CONFIG.SHEETS.SESSIONS).appendRow([
+  const employeeCode =
+    role === 'EMPLOYEE'
+      ? username
+      : '';
+
+  const sheet =
+    getSheet_(CONFIG.SHEETS.SESSIONS);
+
+  sheet.appendRow([
     token,
     username,
     role,
     employeeCode,
     createdAt,
     expiresAt,
-    true,
-    role === 'EMPLOYEE' ? normalizeCitizenID_(citizenID) : ''
+    true
   ]);
 
   return token;
@@ -1388,24 +1793,46 @@ function requireAdminSession_(token) {
 }
 
 function findSession_(token) {
-  if (!token) return null;
+  if (!token) {
+    return null;
+  }
 
-  const sheet = getSheet_(CONFIG.SHEETS.SESSIONS);
+  const sheet =
+    getSheet_(CONFIG.SHEETS.SESSIONS);
+
   const lastRow = sheet.getLastRow();
-  if (lastRow <= 1) return null;
 
-  const colCount = Math.max(SESSION_HEADERS.length, sheet.getLastColumn());
-  const values = sheet.getRange(2, 1, lastRow - 1, colCount).getValues();
-  const now = new Date();
+  if (lastRow <= 1) {
+    return null;
+  }
+
+  const values = sheet
+    .getRange(
+      2,
+      1,
+      lastRow - 1,
+      SESSION_HEADERS.length
+    )
+    .getValues();
+
+  const now =
+    new Date();
 
   for (let i = 0; i < values.length; i++) {
     if (
       String(values[i][0]) === token &&
-      (values[i][6] === true || String(values[i][6]).toLowerCase() === 'true')
+      (
+        values[i][6] === true ||
+        String(values[i][6]).toLowerCase() === 'true'
+      )
     ) {
-      const expires = new Date(values[i][5]);
+      const expires =
+        new Date(values[i][5]);
 
-      if (isNaN(expires.getTime()) || expires.getTime() <= now.getTime()) {
+      if (
+        isNaN(expires.getTime()) ||
+        expires.getTime() <= now.getTime()
+      ) {
         sheet.getRange(i + 2, 7).setValue(false);
         return null;
       }
@@ -1417,8 +1844,7 @@ function findSession_(token) {
         role: String(values[i][2] || ''),
         employeeCode: String(values[i][3] || ''),
         createdAt: values[i][4],
-        expiresAt: values[i][5],
-        citizenID: normalizeCitizenID_(values[i][7] || '')
+        expiresAt: values[i][5]
       };
     }
   }
@@ -1518,23 +1944,41 @@ function verifyPassword_(
 }
 
 function normalizeCitizenID_(value) {
-  if (value === null || value === undefined || value === '') return '';
-
-  let text = String(value).trim();
-  text = text.replace(/^'/, '').replace(/\s+/g, '');
-
-  if (/^\d+\.0+$/.test(text)) {
-    text = text.substring(0, text.indexOf('.'));
+  if (
+    value === null ||
+    value === undefined ||
+    value === ''
+  ) {
+    return '';
   }
 
-  // Khong tu dong padStart nua: CCCD chi hop le khi dung 12 chu so.
-  if (!/^\d{12}$/.test(text)) return '';
+  let text =
+    String(value).trim();
+
+  if (
+    /^\d+\.0+$/.test(text)
+  ) {
+    text =
+      text.substring(
+        0,
+        text.indexOf('.')
+      );
+  }
+
+  text =
+    text.replace(/^'/, '');
+
+  text =
+    text.replace(/\s+/g, '');
+
+  if (/^\d+$/.test(text)) {
+    if (text.length < 12) {
+      text =
+        text.padStart(12, '0');
+    }
+  }
 
   return text;
-}
-
-function isValidCitizenID_(value) {
-  return /^\d{12}$/.test(normalizeCitizenID_(value));
 }
 
 function numberValue_(value) {

@@ -1,17 +1,7 @@
 Option Explicit
 
-' ============================================================
-' PAYROLL SYNC - BAN MAP
-' Chi can sua cot tai 2 ham:
-'   PayrollColumnMap_ : sheet Salary
-'   DSCNVColumnMap_   : sheet DSCNV
-' Khong sua logic doc/JSON/API khi doi vi tri cot.
-' Khoa nghiep vu: CitizenID 12 so + SalaryMonth.
-' EmployeeCode chi la ma cua rieng tung thang.
-' ============================================================
-
 Private Const API_URL As String = _
-    "https://script.google.com/macros/s/AKfycbzenFqwhLeihHWWp00noO5EK3g_buYizFpnOaNVqiVO2EdhtI_KO-RzEkSUahMst0Vapw/exec"
+    "https://script.google.com/macros/s/AKfycbyW7OjW5OJhgaw8hiqSkelERGigCZ0mRWkGvPxkSlBFpGxUAO0rKY3H--co8fpxbYH8Fw/exec"
 
 Private Const SYNC_API_KEY As String = _
     "TRUONGCONGVU_SALARYSLIP_1988_Elbalosnocni"
@@ -22,162 +12,246 @@ Private Const ROOT_PATH As String = _
     "\\192.168.0.253\vn hr\SALARY - 2014 - 2015\"
 
 Private Const MAX_RETRY As Long = 3
+
 Private Const WAIT_SECONDS As Long = 5
+
 Private Const SHEET_START_ROW As Long = 7
 
-Private Function PayrollColumnMap_() As Object
-    Dim m As Object
-    Set m = CreateObject("Scripting.Dictionary")
-    m.CompareMode = vbTextCompare
+Private Const COL_EMPLOYEE_CODE As Long = 4
+Private Const COL_BASIC_SALARY As Long = 6
+Private Const COL_WORKING_DAYS As Long = 8
+Private Const COL_HOLIDAY_DAYS As Long = 9
+Private Const COL_PAID_LEAVE_DAYS As Long = 10
+Private Const COL_UNPAID_LEAVE_DAYS As Long = 11
+Private Const COL_OVERTIME_HOURS As Long = 12
+Private Const COL_HOLIDAY_WORK_HOURS As Long = 13
+Private Const COL_HOLIDAY_OVERTIME_HOURS As Long = 14
+Private Const COL_MIN_REGIONAL_LEAVE_DAYS As Long = 15
+Private Const COL_NIGHT_HOLIDAY_OT As Long = 16
+Private Const COL_NIGHT_OT As Long = 17
+Private Const COL_HOLIDAY_WORK_DAY_HOURS As Long = 18
+Private Const COL_HOLIDAY_OT_DAY_HOURS As Long = 19
+Private Const COL_NIGHT_HOLIDAY_OT_DAY As Long = 20
+Private Const COL_NIGHT_SHIFT_DAYS As Long = 21
+Private Const COL_OTHER_MONEY As Long = 24
+Private Const COL_DISCIPLINARY_MONEY As Long = 25
+Private Const COL_LOYALTY_2 As Long = 26
+Private Const COL_LOYALTY_5 As Long = 27
+Private Const COL_LOYALTY_10 As Long = 28
+Private Const COL_HOUSING As Long = 29
+Private Const COL_TRANSPORT As Long = 30
+Private Const COL_ATTENDANCE As Long = 31
+Private Const COL_SEVERANCE_UNUSED_LEAVE As Long = 32
+Private Const COL_MONTHLY_SALARY As Long = 40
+Private Const COL_OVERTIME_SALARY As Long = 41
+Private Const COL_COMMISSION As Long = 43
+Private Const COL_OTHER_DEDUCTIONS As Long = 36
+Private Const COL_ADVANCE As Long = 37
+Private Const COL_SOCIAL_INSURANCE As Long = 33
+Private Const COL_HEALTH_INSURANCE As Long = 34
+Private Const COL_UNEMPLOYMENT_INSURANCE As Long = 35
+Private Const COL_PERSONAL_INCOME_TAX As Long = 46
+Private Const COL_GROSS_INCOME As Long = 44
+Private Const COL_NET_SALARY As Long = 49
+Private Const COL_FULL_NAME As Long = 84
 
-    ' Salary: key logic -> column number
-    m("employeeCode") = 4
-    m("basicSalary") = 6
-    m("workingDays") = 8
-    m("holidayDays") = 9
-    m("paidLeaveDays") = 10
-    m("unpaidLeaveDays") = 11
-    m("overtimeHours") = 12
-    m("holidayWorkHours") = 13
-    m("holidayOvertimeHours") = 14
-    m("minimumRegionalLeaveDays") = 15
-    m("nightHolidayOvertimeHours") = 16
-    m("nightOvertimeHours") = 17
-    m("holidayWorkDayHours") = 18
-    m("holidayOvertimeDayHours") = 19
-    m("nightHolidayOvertimeDayHours") = 20
-    m("nightShiftDays") = 21
-    m("otherMoney") = 24
-    m("disciplinaryMoney") = 25
-    m("loyalty2Years") = 26
-    m("loyalty5Years") = 27
-    m("loyalty10Years") = 28
-    m("housingAllowance") = 29
-    m("transportationAllowance") = 30
-    m("attendanceBonus") = 31
-    m("severanceAndUnusedLeave") = 32
-    m("socialInsurance") = 33
-    m("healthInsurance") = 34
-    m("unemploymentInsurance") = 35
-    m("otherDeductions") = 36
-    m("advancePayment") = 37
-    m("monthlySalary") = 40
-    m("overtimeSalary") = 41
-    m("commissionAndOverTargetBonus") = 43
-    m("grossIncome") = 44
-    m("personalIncomeTax") = 46
-    m("netSalary") = 49
-    m("fullName") = 84
-
-    Set PayrollColumnMap_ = m
-End Function
-
-Private Function DSCNVColumnMap_() As Object
-    Dim m As Object
-    Set m = CreateObject("Scripting.Dictionary")
-    m.CompareMode = vbTextCompare
-
-    ' DSCNV: key logic -> column number
-    m("fullName") = 2
-    m("citizenID") = 8
-    m("department") = 32       ' AF
-    m("section") = 33          ' AG
-    m("position") = 34         ' AH
-
-    Set DSCNVColumnMap_ = m
-End Function
-
-Private Function MapCol_(ByVal m As Object, ByVal key As String) As Long
-    If Not m.Exists(key) Then
-        Err.Raise vbObjectError + 2101, "MapCol_", _
-                  "Thieu map cot: " & key
-    End If
-    MapCol_ = CLng(m(key))
-End Function
+Private Const DSCNV_NAME_COL As Long = 2
+Private Const DSCNV_CITIZEN_COL As Long = 8
+Private Const DSCNV_PHONE_COL As Long = 15
+Private Const DSCNV_DEPARTMENT_COL As Long = 32
+Private Const DSCNV_SECTION_COL As Long = 33
+Private Const DSCNV_POSITION_COL As Long = 34
 
 Public Sub RunPayrollSync()
 
     Dim targetDate As Date
     Dim targetMonth As Date
+
     Dim salaryMonth As String
+
     Dim snackFile As String
     Dim flexibleFile As String
+
     Dim snackRecords As Collection
     Dim flexibleRecords As Collection
     Dim allRecords As Collection
+
     Dim payload As String
     Dim responseText As String
+
     Dim success As Boolean
 
     On Error GoTo ErrorHandler
 
     LogMessage "=== BAT DAU DONG BO LUONG ==="
-    LogMessage "Thoi gian chay: " & Format(Now, "dd/MM/yyyy HH:mm:ss")
+    LogMessage "Thoi gian chay: " & _
+               Format(Now, "dd/MM/yyyy HH:mm:ss")
 
     targetDate = Date
-    targetMonth = DateAdd("m", -1, DateSerial(Year(targetDate), Month(targetDate), 1))
-    salaryMonth = Format(targetMonth, "mm-yyyy")
-    LogMessage "Thang luong can dong bo: " & salaryMonth
+    targetMonth = DateAdd("m", -1, _
+                          DateSerial(Year(targetDate), _
+                                     Month(targetDate), _
+                                     1))
+
+    salaryMonth = _
+        Format(targetMonth, "mm-yyyy")
+
+    LogMessage "Thang luong can dong bo: " & _
+               salaryMonth
 
     snackFile = FindSnackFile_(targetMonth)
     flexibleFile = FindFlexibleFile_(targetMonth)
 
+    If Len(snackFile) = 0 Then
+        LogMessage "Khong tim thay file Snack."
+    Else
+        LogMessage "Tim thay file Snack: " & snackFile
+    End If
+
+    If Len(flexibleFile) = 0 Then
+        LogMessage "Khong tim thay file Flexible."
+    Else
+        LogMessage "Tim thay file Flexible: " & flexibleFile
+    End If
+
     Set allRecords = New Collection
 
     If Len(snackFile) > 0 Then
-        Set snackRecords = ReadPayrollWorkbook_(snackFile, "Snack", targetMonth)
-        AppendCollection_ allRecords, snackRecords
-    Else
-        LogMessage "Khong tim thay file Snack."
+
+        Set snackRecords = _
+            ReadPayrollWorkbook_( _
+                snackFile, _
+                "Snack", _
+                targetMonth)
+
+        AppendCollection_ _
+            allRecords, _
+            snackRecords
+
     End If
 
     If Len(flexibleFile) > 0 Then
-        Set flexibleRecords = ReadPayrollWorkbook_(flexibleFile, "Flexible", targetMonth)
-        AppendCollection_ allRecords, flexibleRecords
-    Else
-        LogMessage "Khong tim thay file Flexible."
+
+        Set flexibleRecords = _
+            ReadPayrollWorkbook_( _
+                flexibleFile, _
+                "Flexible", _
+                targetMonth)
+
+        AppendCollection_ _
+            allRecords, _
+            flexibleRecords
+
     End If
 
-    If allRecords.Count = 0 Then
-        Err.Raise vbObjectError + 1001, "RunPayrollSync", _
-                  "Khong co dong luong hop le (CCCD phai du 12 so)."
+    If allRecords.count = 0 Then
+        Err.Raise _
+            vbObjectError + 1001, _
+            "RunPayrollSync", _
+            "Khong co du lieu luong de dong bo."
     End If
 
-    LogMessage "Tong so dong du lieu hop le: " & CStr(allRecords.Count)
+    LogMessage "Tong so dong du lieu: " & _
+               CStr(allRecords.count)
 
-    payload = BuildSyncPayload_(allRecords, salaryMonth, snackFile, flexibleFile)
+    payload = BuildSyncPayload_( _
+        allRecords, _
+        salaryMonth, _
+        snackFile, _
+        flexibleFile)
+
     LogMessage "Kich thuoc JSON: " & CStr(Len(payload)) & " ky tu."
+    LogMessage "Dang gui du lieu len GAS..."
 
-    success = PostWithRetry_(payload, responseText)
+    success = PostWithRetry_( _
+        payload, _
+        responseText)
 
     If Not success Then
-        Err.Raise vbObjectError + 1002, "RunPayrollSync", _
-                  "API dong bo that bai. Phan hoi: " & responseText
+        Err.Raise _
+            vbObjectError + 1002, _
+            "RunPayrollSync", _
+            "API dong bo that bai. Phan hoi: " & _
+            responseText
     End If
 
     LogMessage "Dong bo thanh cong."
     LogMessage "Phan hoi API: " & responseText
+
     LogMessage "=== KET THUC DONG BO ==="
+
     Exit Sub
 
 ErrorHandler:
-    LogMessage "LOI: " & Err.Number & " - " & Err.Description
-    MsgBox "Dong bo luong that bai." & vbCrLf & vbCrLf & Err.Description, _
-           vbCritical, "Payroll Sync"
+
+    LogMessage "LOI: " & _
+               Err.Number & _
+               " - " & _
+               Err.Description
+
+    MsgBox _
+        "Dong bo luong that bai." & _
+        vbCrLf & vbCrLf & _
+        Err.Description, _
+        vbCritical, _
+        "Payroll Sync"
+
 End Sub
 
-Private Function FindSnackFile_(ByVal targetMonth As Date) As String
-    Dim p As String
-    p = ROOT_PATH & "VNLWW\" & Format(targetMonth, "yyyy") & "\SALARY " & _
-        Format(targetMonth, "mm-yyyy") & ".xlsb"
-    If FileExists_(p) Then FindSnackFile_ = p
+Private Function FindSnackFile_( _
+    ByVal targetMonth As Date) As String
+
+    Dim yearFolder As String
+    Dim fileName As String
+    Dim fullPath As String
+
+    yearFolder = _
+        ROOT_PATH & _
+        "VNLWW\" & _
+        Format(targetMonth, "yyyy") & "\"
+
+    fileName = _
+        "SALARY " & _
+        Format(targetMonth, "mm-yyyy") & _
+        ".xlsb"
+
+    fullPath = _
+        yearFolder & fileName
+
+    If FileExists_(fullPath) Then
+        FindSnackFile_ = fullPath
+    Else
+        FindSnackFile_ = ""
+    End If
+
 End Function
 
-Private Function FindFlexibleFile_(ByVal targetMonth As Date) As String
-    Dim p As String
-    p = ROOT_PATH & "Printing line\" & Format(targetMonth, "yyyy") & "\PRINTING LINE " & _
-        Format(targetMonth, "mm-yyyy") & ".xlsb"
-    If FileExists_(p) Then FindFlexibleFile_ = p
+Private Function FindFlexibleFile_( _
+    ByVal targetMonth As Date) As String
+
+    Dim yearFolder As String
+    Dim fileName As String
+    Dim fullPath As String
+
+    yearFolder = _
+        ROOT_PATH & _
+        "Printing line\" & _
+        Format(targetMonth, "yyyy") & "\"
+
+    fileName = _
+        "PRINTING LINE " & _
+        Format(targetMonth, "mm-yyyy") & _
+        ".xlsb"
+
+    fullPath = _
+        yearFolder & fileName
+
+    If FileExists_(fullPath) Then
+        FindFlexibleFile_ = fullPath
+    Else
+        FindFlexibleFile_ = ""
+    End If
+
 End Function
 
 Private Function ReadPayrollWorkbook_( _
@@ -189,269 +263,705 @@ Private Function ReadPayrollWorkbook_( _
     Dim wb As Workbook
     Dim wsSalary As Worksheet
     Dim wsDSCNV As Worksheet
-    Dim salaryMap As Object
+
     Dim dscnvMap As Object
-    Dim rowIndex As Long
+
     Dim lastSalaryRow As Long
+    Dim lastDSCNVRow As Long
+
+    Dim rowIndex As Long
+
     Dim employeeName As String
     Dim normalizedName As String
+
     Dim employeeCode As String
     Dim citizenID As String
+    Dim phoneNumber As String
     Dim department As String
     Dim section As String
     Dim position As String
+
     Dim record As Object
-    Dim stopReason As String
 
     On Error GoTo ErrorHandler
+
     Set result = New Collection
-    Set salaryMap = PayrollColumnMap_()
 
-    LogMessage "[" & factoryName & "] Dang mo file: " & filePath
+    LogMessage _
+        "[" & factoryName & _
+        "] Dang mo file: " & _
+        filePath
 
-    Set wb = Workbooks.Open(fileName:=filePath, password:=FILE_PASSWORD, _
-                            ReadOnly:=True, UpdateLinks:=False, AddToMru:=False)
+    Set wb = Workbooks.Open( _
+        fileName:=filePath, _
+        password:=FILE_PASSWORD, _
+        ReadOnly:=True, _
+        UpdateLinks:=False, _
+        AddToMru:=False)
+
+    Set wsSalary = Nothing
+    Set wsDSCNV = Nothing
 
     On Error Resume Next
-    Set wsSalary = wb.Worksheets("Salary")
-    Set wsDSCNV = wb.Worksheets("DSCNV")
+
+    Set wsSalary = _
+        wb.Worksheets("Salary")
+
+    Set wsDSCNV = _
+        wb.Worksheets("DSCNV")
+
     On Error GoTo ErrorHandler
 
-    If wsSalary Is Nothing Then Err.Raise vbObjectError + 2001, "ReadPayrollWorkbook_", "Khong tim thay sheet Salary."
-    If wsDSCNV Is Nothing Then Err.Raise vbObjectError + 2002, "ReadPayrollWorkbook_", "Khong tim thay sheet DSCNV."
+    If wsSalary Is Nothing Then
+        Err.Raise _
+            vbObjectError + 2001, _
+            "ReadPayrollWorkbook_", _
+            "Khong tim thay sheet Salary."
+    End If
 
-    Set dscnvMap = BuildDSCNVMap_(wsDSCNV)
-    lastSalaryRow = FindSalaryEndRow_(wsSalary, MapCol_(salaryMap, "fullName"))
+    If wsDSCNV Is Nothing Then
+        Err.Raise _
+            vbObjectError + 2002, _
+            "ReadPayrollWorkbook_", _
+            "Khong tim thay sheet DSCNV."
+    End If
 
-    LogMessage "[" & factoryName & "] Dong doc: " & SHEET_START_ROW & " den " & lastSalaryRow
+    LogMessage _
+        "[" & factoryName & _
+        "] Dang tao index DSCNV..."
 
-    For rowIndex = SHEET_START_ROW To lastSalaryRow
+    Set dscnvMap = _
+        BuildDSCNVMap_(wsDSCNV)
 
-        If IsSalaryTotalRow_(wsSalary, rowIndex) Then
-            stopReason = Trim$(CStr(wsSalary.Cells(rowIndex, 2).Value2))
-            LogMessage "[" & factoryName & "] Gap dong TOTAL tai row " & rowIndex & " (" & stopReason & "), dung doc."
-            Exit For
-        End If
+    lastSalaryRow = _
+        LastUsedRow_( _
+            wsSalary, _
+            COL_FULL_NAME)
 
-        employeeName = Trim$(CStr(wsSalary.Cells(rowIndex, MapCol_(salaryMap, "fullName")).Value2))
-        If Len(employeeName) = 0 Then GoTo ContinueSalaryRow
+    lastDSCNVRow = _
+        LastUsedRow_( _
+            wsDSCNV, _
+            DSCNV_NAME_COL)
 
-        employeeCode = Trim$(CStr(wsSalary.Cells(rowIndex, MapCol_(salaryMap, "employeeCode")).Value2))
-        normalizedName = NormalizeName_(employeeName)
+    LogMessage _
+        "[" & factoryName & _
+        "] Salary last row: " & _
+        CStr(lastSalaryRow)
 
-        citizenID = ""
-        department = ""
-        section = ""
-        position = ""
+    LogMessage _
+        "[" & factoryName & _
+        "] DSCNV last row: " & _
+        CStr(lastDSCNVRow)
 
-        If dscnvMap.Exists(normalizedName) Then
-            citizenID = dscnvMap(normalizedName)("CitizenID")
-            department = dscnvMap(normalizedName)("Department")
-            section = dscnvMap(normalizedName)("Section")
-            position = dscnvMap(normalizedName)("Position")
-        End If
+    For rowIndex = _
+        SHEET_START_ROW To lastSalaryRow
 
-        ' Chi chap nhan dong co CCCD dung 12 chu so.
-        If Not IsValidCitizenID_(citizenID) Then
-            LogMessage "[" & factoryName & "] BO QUA row " & rowIndex & _
-                       ": CCCD khong hop le - " & employeeName
+        employeeName = _
+            Trim$(CStr( _
+                wsSalary.Cells( _
+                    rowIndex, _
+                    COL_FULL_NAME).Value2))
+
+        If Len(employeeName) = 0 Then
             GoTo ContinueSalaryRow
         End If
 
-        Set record = CreatePayrollRecord_(wsSalary, rowIndex, salaryMap)
-        record("employeeCode") = employeeCode
-        record("fullName") = employeeName
-        record("citizenID") = citizenID
-        record("department") = department
-        record("section") = section
-        record("position") = position
+        normalizedName = _
+            NormalizeName_(employeeName)
+
+        employeeCode = _
+            Trim$(CStr( _
+                wsSalary.Cells( _
+                    rowIndex, _
+                    COL_EMPLOYEE_CODE).Value2))
+
+        If dscnvMap.Exists(normalizedName) Then
+
+            citizenID = _
+                dscnvMap(normalizedName)("CitizenID")
+
+            phoneNumber = _
+                dscnvMap(normalizedName)("PhoneNumber")
+
+            department = _
+                dscnvMap(normalizedName)("Department")
+
+            section = _
+                dscnvMap(normalizedName)("Section")
+
+            position = _
+                dscnvMap(normalizedName)("Position")
+
+        Else
+
+            citizenID = ""
+            phoneNumber = ""
+            department = ""
+            section = ""
+            position = ""
+
+            LogMessage _
+                "[" & factoryName & _
+                "] KHONG MAP DSCNV: " & _
+                employeeName
+
+        End If
+
+        Set record = CreateObject("Scripting.Dictionary")
+
+        record.Add _
+            "employeeCode", _
+            employeeCode
+
+        record.Add _
+            "fullName", _
+            employeeName
+
+        record.Add _
+            "citizenID", _
+            citizenID
+
+        record.Add _
+            "phoneNumber", _
+            phoneNumber
+
+        record.Add _
+            "department", _
+            department
+
+        record.Add _
+            "section", _
+            section
+
+        record.Add _
+            "position", _
+            position
+
+        record.Add _
+            "basicSalary", _
+            CellNumber_( _
+                wsSalary.Cells( _
+                    rowIndex, _
+                    COL_BASIC_SALARY))
+
+        record.Add _
+            "workingDays", _
+            CellNumber_( _
+                wsSalary.Cells( _
+                    rowIndex, _
+                    COL_WORKING_DAYS))
+
+        record.Add _
+            "holidayDays", _
+            CellNumber_( _
+                wsSalary.Cells( _
+                    rowIndex, _
+                    COL_HOLIDAY_DAYS))
+
+        record.Add _
+            "paidLeaveDays", _
+            CellNumber_( _
+                wsSalary.Cells( _
+                    rowIndex, _
+                    COL_PAID_LEAVE_DAYS))
+
+        record.Add _
+            "unpaidLeaveDays", _
+            CellNumber_( _
+                wsSalary.Cells( _
+                    rowIndex, _
+                    COL_UNPAID_LEAVE_DAYS))
+
+        record.Add _
+            "overtimeHours", _
+            CellNumber_( _
+                wsSalary.Cells( _
+                    rowIndex, _
+                    COL_OVERTIME_HOURS))
+
+        record.Add _
+            "holidayWorkHours", _
+            CellNumber_( _
+                wsSalary.Cells( _
+                    rowIndex, _
+                    COL_HOLIDAY_WORK_HOURS))
+
+        record.Add _
+            "holidayOvertimeHours", _
+            CellNumber_( _
+                wsSalary.Cells( _
+                    rowIndex, _
+                    COL_HOLIDAY_OVERTIME_HOURS))
+
+        record.Add _
+            "minimumRegionalLeaveDays", _
+            CellNumber_( _
+                wsSalary.Cells( _
+                    rowIndex, _
+                    COL_MIN_REGIONAL_LEAVE_DAYS))
+
+        record.Add _
+            "nightHolidayOvertimeHours", _
+            CellNumber_( _
+                wsSalary.Cells( _
+                    rowIndex, _
+                    COL_NIGHT_HOLIDAY_OT))
+
+        record.Add _
+            "nightOvertimeHours", _
+            CellNumber_( _
+                wsSalary.Cells( _
+                    rowIndex, _
+                    COL_NIGHT_OT))
+
+        record.Add _
+            "holidayWorkDayHours", _
+            CellNumber_( _
+                wsSalary.Cells( _
+                    rowIndex, _
+                    COL_HOLIDAY_WORK_DAY_HOURS))
+
+        record.Add _
+            "holidayOvertimeDayHours", _
+            CellNumber_( _
+                wsSalary.Cells( _
+                    rowIndex, _
+                    COL_HOLIDAY_OT_DAY_HOURS))
+
+        record.Add _
+            "nightHolidayOvertimeDayHours", _
+            CellNumber_( _
+                wsSalary.Cells( _
+                    rowIndex, _
+                    COL_NIGHT_HOLIDAY_OT_DAY))
+
+        record.Add _
+            "nightShiftDays", _
+            CellNumber_( _
+                wsSalary.Cells( _
+                    rowIndex, _
+                    COL_NIGHT_SHIFT_DAYS))
+
+        record.Add _
+            "otherMoney", _
+            CellNumber_( _
+                wsSalary.Cells( _
+                    rowIndex, _
+                    COL_OTHER_MONEY))
+
+        record.Add _
+            "disciplinaryMoney", _
+            CellNumber_( _
+                wsSalary.Cells( _
+                    rowIndex, _
+                    COL_DISCIPLINARY_MONEY))
+
+        record.Add _
+            "loyalty2Years", _
+            CellNumber_( _
+                wsSalary.Cells( _
+                    rowIndex, _
+                    COL_LOYALTY_2))
+
+        record.Add _
+            "loyalty5Years", _
+            CellNumber_( _
+                wsSalary.Cells( _
+                    rowIndex, _
+                    COL_LOYALTY_5))
+
+        record.Add _
+            "loyalty10Years", _
+            CellNumber_( _
+                wsSalary.Cells( _
+                    rowIndex, _
+                    COL_LOYALTY_10))
+
+        record.Add _
+            "housingAllowance", _
+            CellNumber_( _
+                wsSalary.Cells( _
+                    rowIndex, _
+                    COL_HOUSING))
+
+        record.Add _
+            "transportationAllowance", _
+            CellNumber_( _
+                wsSalary.Cells( _
+                    rowIndex, _
+                    COL_TRANSPORT))
+
+        record.Add _
+            "attendanceBonus", _
+            CellNumber_( _
+                wsSalary.Cells( _
+                    rowIndex, _
+                    COL_ATTENDANCE))
+
+        record.Add _
+            "severanceAndUnusedLeave", _
+            CellNumber_( _
+                wsSalary.Cells( _
+                    rowIndex, _
+                    COL_SEVERANCE_UNUSED_LEAVE))
+
+        record.Add _
+            "monthlySalary", _
+            CellNumber_( _
+                wsSalary.Cells( _
+                    rowIndex, _
+                    COL_MONTHLY_SALARY))
+
+        record.Add _
+            "overtimeSalary", _
+            CellNumber_( _
+                wsSalary.Cells( _
+                    rowIndex, _
+                    COL_OVERTIME_SALARY))
+
+        record.Add _
+            "commissionAndOverTargetBonus", _
+            CellNumber_( _
+                wsSalary.Cells( _
+                    rowIndex, _
+                    COL_COMMISSION))
+
+        record.Add _
+            "otherIncome", _
+            CellNumber_(wsSalary.Cells(rowIndex, COL_OTHER_MONEY)) + _
+            CellNumber_(wsSalary.Cells(rowIndex, COL_DISCIPLINARY_MONEY)) + _
+            CellNumber_(wsSalary.Cells(rowIndex, COL_LOYALTY_2)) + _
+            CellNumber_(wsSalary.Cells(rowIndex, COL_LOYALTY_5)) + _
+            CellNumber_(wsSalary.Cells(rowIndex, COL_LOYALTY_10)) + _
+            CellNumber_(wsSalary.Cells(rowIndex, COL_HOUSING)) + _
+            CellNumber_(wsSalary.Cells(rowIndex, COL_TRANSPORT)) + _
+            CellNumber_(wsSalary.Cells(rowIndex, COL_ATTENDANCE)) + _
+            CellNumber_(wsSalary.Cells(rowIndex, COL_COMMISSION)) + _
+            CellNumber_(wsSalary.Cells(rowIndex, COL_SEVERANCE_UNUSED_LEAVE))
+
+        record.Add _
+            "otherDeductions", _
+            CellNumber_( _
+                wsSalary.Cells( _
+                    rowIndex, _
+                    COL_OTHER_DEDUCTIONS))
+
+        record.Add _
+            "advancePayment", _
+            CellNumber_( _
+                wsSalary.Cells( _
+                    rowIndex, _
+                    COL_ADVANCE))
+
+        record.Add _
+            "socialInsurance", _
+            CellNumber_( _
+                wsSalary.Cells( _
+                    rowIndex, _
+                    COL_SOCIAL_INSURANCE))
+
+        record.Add _
+            "healthInsurance", _
+            CellNumber_( _
+                wsSalary.Cells( _
+                    rowIndex, _
+                    COL_HEALTH_INSURANCE))
+
+        record.Add _
+            "unemploymentInsurance", _
+            CellNumber_( _
+                wsSalary.Cells( _
+                    rowIndex, _
+                    COL_UNEMPLOYMENT_INSURANCE))
+
+        record.Add _
+            "personalIncomeTax", _
+            CellNumber_( _
+                wsSalary.Cells( _
+                    rowIndex, _
+                    COL_PERSONAL_INCOME_TAX))
+
+        record.Add _
+                    "grossIncome", _
+            CellNumber_(wsSalary.Cells(rowIndex, COL_GROSS_INCOME))
+                    
+        record.Add _
+            "netSalary", _
+            CellNumber_( _
+                wsSalary.Cells( _
+                    rowIndex, _
+                    COL_NET_SALARY))
 
         result.Add record
 
 ContinueSalaryRow:
+
     Next rowIndex
 
     wb.Close SaveChanges:=False
     Set wb = Nothing
 
-    LogMessage "[" & factoryName & "] Doc duoc " & CStr(result.Count) & " dong hop le."
+    LogMessage _
+        "[" & factoryName & _
+        "] Doc duoc " & _
+        CStr(result.count) & _
+        " dong."
+
     Set ReadPayrollWorkbook_ = result
+
     Exit Function
 
 ErrorHandler:
+
     If Not wb Is Nothing Then
         On Error Resume Next
         wb.Close SaveChanges:=False
         On Error GoTo 0
     End If
-    Err.Raise Err.Number, "ReadPayrollWorkbook_", Err.Description
+
+    Err.Raise _
+        Err.Number, _
+        "ReadPayrollWorkbook_", _
+        Err.Description
+
 End Function
 
-Private Function CreatePayrollRecord_( _
-    ByVal ws As Worksheet, _
-    ByVal rowIndex As Long, _
-    ByVal m As Object) As Object
+Private Function BuildDSCNVMap_( _
+    ByVal ws As Worksheet) As Object
 
-    Dim r As Object
-    Set r = CreateObject("Scripting.Dictionary")
-    r.CompareMode = vbTextCompare
+    Dim map As Object
 
-    r("employeeCode") = ""
-    r("fullName") = ""
-    r("citizenID") = ""
-    r("department") = ""
-    r("section") = ""
-    r("position") = ""
+    Dim lastRow As Long
+    Dim rowIndex As Long
 
-    r("basicSalary") = CellNumber_(ws.Cells(rowIndex, MapCol_(m, "basicSalary")))
-    r("workingDays") = CellNumber_(ws.Cells(rowIndex, MapCol_(m, "workingDays")))
-    r("holidayDays") = CellNumber_(ws.Cells(rowIndex, MapCol_(m, "holidayDays")))
-    r("paidLeaveDays") = CellNumber_(ws.Cells(rowIndex, MapCol_(m, "paidLeaveDays")))
-    r("unpaidLeaveDays") = CellNumber_(ws.Cells(rowIndex, MapCol_(m, "unpaidLeaveDays")))
-    r("overtimeHours") = CellNumber_(ws.Cells(rowIndex, MapCol_(m, "overtimeHours")))
-    r("holidayWorkHours") = CellNumber_(ws.Cells(rowIndex, MapCol_(m, "holidayWorkHours")))
-    r("holidayOvertimeHours") = CellNumber_(ws.Cells(rowIndex, MapCol_(m, "holidayOvertimeHours")))
-    r("minimumRegionalLeaveDays") = CellNumber_(ws.Cells(rowIndex, MapCol_(m, "minimumRegionalLeaveDays")))
-    r("nightHolidayOvertimeHours") = CellNumber_(ws.Cells(rowIndex, MapCol_(m, "nightHolidayOvertimeHours")))
-    r("nightOvertimeHours") = CellNumber_(ws.Cells(rowIndex, MapCol_(m, "nightOvertimeHours")))
-    r("holidayWorkDayHours") = CellNumber_(ws.Cells(rowIndex, MapCol_(m, "holidayWorkDayHours")))
-    r("holidayOvertimeDayHours") = CellNumber_(ws.Cells(rowIndex, MapCol_(m, "holidayOvertimeDayHours")))
-    r("nightHolidayOvertimeDayHours") = CellNumber_(ws.Cells(rowIndex, MapCol_(m, "nightHolidayOvertimeDayHours")))
-    r("nightShiftDays") = CellNumber_(ws.Cells(rowIndex, MapCol_(m, "nightShiftDays")))
+    Dim employeeName As String
+    Dim key As String
 
-    r("otherMoney") = CellNumber_(ws.Cells(rowIndex, MapCol_(m, "otherMoney")))
-    r("disciplinaryMoney") = CellNumber_(ws.Cells(rowIndex, MapCol_(m, "disciplinaryMoney")))
-    r("loyalty2Years") = CellNumber_(ws.Cells(rowIndex, MapCol_(m, "loyalty2Years")))
-    r("loyalty5Years") = CellNumber_(ws.Cells(rowIndex, MapCol_(m, "loyalty5Years")))
-    r("loyalty10Years") = CellNumber_(ws.Cells(rowIndex, MapCol_(m, "loyalty10Years")))
-    r("housingAllowance") = CellNumber_(ws.Cells(rowIndex, MapCol_(m, "housingAllowance")))
-    r("transportationAllowance") = CellNumber_(ws.Cells(rowIndex, MapCol_(m, "transportationAllowance")))
-    r("attendanceBonus") = CellNumber_(ws.Cells(rowIndex, MapCol_(m, "attendanceBonus")))
-    r("severanceAndUnusedLeave") = CellNumber_(ws.Cells(rowIndex, MapCol_(m, "severanceAndUnusedLeave")))
+    Dim item As Object
 
-    r("monthlySalary") = CellNumber_(ws.Cells(rowIndex, MapCol_(m, "monthlySalary")))
-    r("overtimeSalary") = CellNumber_(ws.Cells(rowIndex, MapCol_(m, "overtimeSalary")))
-    r("commissionAndOverTargetBonus") = CellNumber_(ws.Cells(rowIndex, MapCol_(m, "commissionAndOverTargetBonus")))
+    Set map = _
+        CreateObject("Scripting.Dictionary")
 
-    ' III - tong cac khoan phu cap/tro cap/ho tro/bo sung khac.
-    r("otherIncome") = _
-        r("otherMoney") + r("disciplinaryMoney") + _
-        r("loyalty2Years") + r("loyalty5Years") + r("loyalty10Years") + _
-        r("housingAllowance") + r("transportationAllowance") + _
-        r("attendanceBonus") + r("commissionAndOverTargetBonus") + _
-        r("severanceAndUnusedLeave")
-
-    r("otherDeductions") = CellNumber_(ws.Cells(rowIndex, MapCol_(m, "otherDeductions")))
-    r("advancePayment") = CellNumber_(ws.Cells(rowIndex, MapCol_(m, "advancePayment")))
-    r("socialInsurance") = CellNumber_(ws.Cells(rowIndex, MapCol_(m, "socialInsurance")))
-    r("healthInsurance") = CellNumber_(ws.Cells(rowIndex, MapCol_(m, "healthInsurance")))
-    r("unemploymentInsurance") = CellNumber_(ws.Cells(rowIndex, MapCol_(m, "unemploymentInsurance")))
-    r("personalIncomeTax") = CellNumber_(ws.Cells(rowIndex, MapCol_(m, "personalIncomeTax")))
-    r("grossIncome") = CellNumber_(ws.Cells(rowIndex, MapCol_(m, "grossIncome")))
-    r("netSalary") = CellNumber_(ws.Cells(rowIndex, MapCol_(m, "netSalary")))
-
-    Set CreatePayrollRecord_ = r
-End Function
-
-Private Function BuildDSCNVMap_(ByVal ws As Worksheet) As Object
-    Dim map As Object, item As Object, m As Object
-    Dim lastRow As Long, rowIndex As Long
-    Dim employeeName As String, key As String, citizenID As String
-
-    Set map = CreateObject("Scripting.Dictionary")
     map.CompareMode = vbTextCompare
-    Set m = DSCNVColumnMap_()
 
-    lastRow = LastUsedRow_(ws, MapCol_(m, "fullName"))
+    lastRow = _
+        LastUsedRow_( _
+            ws, _
+            DSCNV_NAME_COL)
 
-    For rowIndex = SHEET_START_ROW To lastRow
-        employeeName = Trim$(CStr(ws.Cells(rowIndex, MapCol_(m, "fullName")).Value2))
+    For rowIndex = _
+        SHEET_START_ROW To lastRow
+
+        employeeName = _
+            Trim$(CStr( _
+                ws.Cells( _
+                    rowIndex, _
+                    DSCNV_NAME_COL).Value2))
+
         If Len(employeeName) > 0 Then
-            citizenID = ReadCitizenID_(ws.Cells(rowIndex, MapCol_(m, "citizenID")))
-            If IsValidCitizenID_(citizenID) Then
-                key = NormalizeName_(employeeName)
-                Set item = CreateObject("Scripting.Dictionary")
-                item("CitizenID") = citizenID
-                item("Department") = Trim$(CStr(ws.Cells(rowIndex, MapCol_(m, "department")).Value2))
-                item("Section") = Trim$(CStr(ws.Cells(rowIndex, MapCol_(m, "section")).Value2))
-                item("Position") = Trim$(CStr(ws.Cells(rowIndex, MapCol_(m, "position")).Value2))
 
-                If map.Exists(key) Then
-                    LogMessage "CANH BAO: Trung ten DSCNV, uu tien dong dau: " & employeeName
-                Else
-                    map.Add key, item
-                End If
+            key = _
+                NormalizeName_(employeeName)
+
+            Set item = CreateObject("Scripting.Dictionary")
+
+            item.Add _
+                "CitizenID", _
+                ReadCitizenID_( _
+                    ws.Cells( _
+                        rowIndex, _
+                        DSCNV_CITIZEN_COL))
+
+            item.Add _
+                "PhoneNumber", _
+                ReadPhoneNumber_( _
+                    ws.Cells( _
+                        rowIndex, _
+                        DSCNV_PHONE_COL))
+
+            item.Add _
+                "Department", _
+                Trim$(CStr( _
+                    ws.Cells( _
+                        rowIndex, _
+                        DSCNV_DEPARTMENT_COL).Value2))
+
+            item.Add _
+                "Section", _
+                Trim$(CStr( _
+                    ws.Cells( _
+                        rowIndex, _
+                        DSCNV_SECTION_COL).Value2))
+
+            item.Add _
+                "Position", _
+                Trim$(CStr( _
+                    ws.Cells( _
+                        rowIndex, _
+                        DSCNV_POSITION_COL).Value2))
+
+            If map.Exists(key) Then
+
+                LogMessage _
+                    "CANH BAO: Trung ten trong DSCNV: " & _
+                    employeeName
+
+            Else
+
+                map.Add key, item
+
             End If
+
         End If
+
     Next rowIndex
 
     Set BuildDSCNVMap_ = map
+
 End Function
 
-Private Function IsSalaryTotalRow_(ByVal ws As Worksheet, ByVal rowIndex As Long) As Boolean
-    Dim v As String
-    v = UCase$(Trim$(CStr(ws.Cells(rowIndex, 2).Value2)))
-    IsSalaryTotalRow_ = (Left$(v, 5) = "TOTAL")
-End Function
+Private Function ReadPhoneNumber_( _
+    ByVal cell As Range) As String
 
-Private Function FindSalaryEndRow_(ByVal ws As Worksheet, ByVal nameCol As Long) As Long
-    Dim lastRow As Long, r As Long
-    lastRow = LastUsedRow_(ws, nameCol)
-    For r = SHEET_START_ROW To lastRow
-        If IsSalaryTotalRow_(ws, r) Then
-            FindSalaryEndRow_ = r
-            Exit Function
+    Dim rawValue As String
+    Dim digits As String
+    Dim i As Long
+    Dim oneChar As String
+
+    On Error GoTo Fallback
+
+    ' Read Value2 as text; Excel numeric cells may have lost the leading zero.
+    rawValue = Trim$(CStr(cell.Value2))
+
+    If Len(rawValue) = 0 Then
+        ReadPhoneNumber_ = ""
+        Exit Function
+    End If
+
+    ' Remove a numeric decimal suffix, then keep digits only.
+    If Right$(rawValue, 2) = ".0" Then
+        rawValue = Left$(rawValue, Len(rawValue) - 2)
+    End If
+
+    For i = 1 To Len(rawValue)
+        oneChar = Mid$(rawValue, i, 1)
+        If oneChar >= "0" And oneChar <= "9" Then
+            digits = digits & oneChar
         End If
-    Next r
-    FindSalaryEndRow_ = lastRow
-End Function
-
-Private Function IsValidCitizenID_(ByVal value As String) As Boolean
-    Dim i As Long, ch As String
-    value = Replace(Replace(Trim$(value), "'", ""), " ", "")
-    If Len(value) <> 12 Then Exit Function
-    For i = 1 To 12
-        ch = Mid$(value, i, 1)
-        If ch < "0" Or ch > "9" Then Exit Function
     Next i
-    IsValidCitizenID_ = True
+
+    ' Numeric Excel values such as 901234567 represent 0901234567.
+    If Len(digits) = 9 Then digits = "0" & digits
+
+    If Len(digits) = 10 And Left$(digits, 1) = "0" Then
+        ReadPhoneNumber_ = digits
+    Else
+        ReadPhoneNumber_ = ""
+    End If
+
+    Exit Function
+
+Fallback:
+    ReadPhoneNumber_ = ""
+
 End Function
 
+Private Function ReadCitizenID_( _
+    ByVal cell As Range) As String
 
-Private Function ReadCitizenID_(ByVal cell As Range) As String
     Dim textValue As String
     Dim numberValue As Double
     Dim formatText As String
 
     On Error GoTo Fallback
 
-    textValue = Trim$(CStr(cell.Value2))
-    textValue = Replace(textValue, "'", "")
-    textValue = Replace(textValue, " ", "")
+    textValue = _
+        Trim$(CStr(cell.Value2))
 
-    If Len(textValue) = 0 Then Exit Function
+    textValue = _
+        Replace(textValue, "'", "")
 
-    If IsNumeric(cell.Value2) Then
-        numberValue = CDbl(cell.Value2)
-        formatText = CStr(cell.NumberFormat)
+    textValue = _
+        Replace(textValue, " ", "")
 
-        If Len(formatText) > 0 And InStr(1, formatText, "0", vbTextCompare) > 0 Then
-            On Error Resume Next
-            textValue = Format$(numberValue, Replace(Replace(formatText, """", ""), " ", ""))
-            On Error GoTo Fallback
-        Else
-            textValue = Format$(numberValue, "0")
-        End If
+    If Len(textValue) = 0 Then
+        ReadCitizenID_ = ""
+        Exit Function
     End If
 
-    textValue = Replace(textValue, ".", "")
-    textValue = Replace(textValue, ",", "")
+    If IsNumeric(cell.Value2) Then
+
+        numberValue = _
+            CDbl(cell.Value2)
+
+        formatText = _
+            CStr(cell.NumberFormat)
+
+        If Len(formatText) > 0 _
+           And InStr(1, formatText, "0", _
+                    vbTextCompare) > 0 Then
+
+            textValue = _
+                Format$( _
+                    numberValue, _
+                    Replace( _
+                        Replace( _
+                            formatText, _
+                            """", ""), _
+                        " ", ""))
+
+        Else
+
+            If numberValue = _
+               Fix(numberValue) Then
+
+                textValue = _
+                    Format$( _
+                        numberValue, _
+                        "0")
+
+            Else
+
+                textValue = _
+                    CStr(cell.text)
+
+            End If
+
+        End If
+
+    End If
+
+    If Right$(textValue, 2) = ".0" Then
+        textValue = _
+            Left$( _
+                textValue, _
+                Len(textValue) - 2)
+    End If
+
+    If IsNumeric(textValue) Then
+
+        textValue = _
+            Replace(textValue, ".", "")
+
+        If Len(textValue) < 12 Then
+            textValue = _
+                Right$( _
+                    String$(12, "0") & _
+                    textValue, _
+                    12)
+        End If
+
+    End If
 
     ReadCitizenID_ = textValue
+
     Exit Function
 
 Fallback:
-    ReadCitizenID_ = Trim$(Replace(CStr(cell.Text), "'", ""))
+
+    ReadCitizenID_ = _
+        Trim$(CStr(cell.text))
+
 End Function
 
 Private Function NormalizeName_( _
@@ -629,6 +1139,10 @@ Private Function RecordToJson_( _
         record("citizenID"), True
 
     AddJsonString_ json, _
+        "phoneNumber", _
+        record("phoneNumber"), True
+
+    AddJsonString_ json, _
         "department", _
         record("department"), True
 
@@ -695,10 +1209,6 @@ Private Function RecordToJson_( _
     AddJsonNumber_ json, _
         "nightShiftDays", _
         record("nightShiftDays"), True
-
-    AddJsonNumber_ json, _
-        "nightHolidayOvertimeDayHours", _
-        record("nightHolidayOvertimeDayHours"), True
 
     AddJsonNumber_ json, _
         "otherMoney", _

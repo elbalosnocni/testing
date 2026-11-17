@@ -1,49 +1,39 @@
 Option Explicit
 
-Dim excelApp
-Dim workbook
-Dim workbookPath
-Dim fso
-Dim scriptFolder
-
-Set fso = CreateObject("Scripting.FileSystemObject")
-scriptFolder = fso.GetParentFolderName(WScript.ScriptFullName)
-workbookPath = fso.BuildPath(scriptFolder, "PayrollSync.xlsm")
-
+Dim xl, wb
 On Error Resume Next
 
-Set excelApp = CreateObject("Excel.Application")
+Set xl = CreateObject("Excel.Application")
+If Err.Number <> 0 Then WScript.Quit 1
+
+xl.Visible = False
+xl.DisplayAlerts = False
+xl.EnableEvents = True
+xl.AskToUpdateLinks = False
+
+' File containing the VBA module.
+Set wb = xl.Workbooks.Open("D:\vtc\github\PayrollSync.xlsm", False, False)
+    
 If Err.Number <> 0 Then
-    WScript.Echo "Khong the khoi dong Microsoft Excel: " & Err.Description
-    WScript.Quit 1
+    xl.Quit
+    WScript.Quit 2
 End If
+
 Err.Clear
 
-excelApp.Visible = False
-excelApp.DisplayAlerts = False
-excelApp.EnableEvents = False
-excelApp.ScreenUpdating = False
-
-Set workbook = excelApp.Workbooks.Open(workbookPath, 0, False)
-If Err.Number <> 0 Then
-    WScript.Echo "Khong the mo file: " & workbookPath & vbCrLf & Err.Description
-    excelApp.Quit
-    WScript.Quit 1
-End If
-Err.Clear
-
-excelApp.Run "'" & workbook.Name & "'!RunPayrollSync"
+xl.Run "'" & wb.Name & "'!RunPayrollSync"
 
 If Err.Number <> 0 Then
-    WScript.Echo "Macro dong bo gap loi: " & Err.Description
-    Err.Clear
+    wb.Close False
+    xl.Quit
+    WScript.Quit 3
 End If
 
-If Not workbook Is Nothing Then workbook.Close False
-If Not excelApp Is Nothing Then excelApp.Quit
+wb.Save
+wb.Close False
+xl.Quit
 
-Set workbook = Nothing
-Set excelApp = Nothing
-Set fso = Nothing
+Set wb = Nothing
+Set xl = Nothing
 
 WScript.Quit 0

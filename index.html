@@ -602,10 +602,10 @@ th {
                 Tra cứu lương
             </h1>
 <a href="https://zalo.me/3933191910227963298" target="_blank" class="btn-zalo">💬 Bấm Liên hệ Hỗ Trợ</a>
-            <p>📱 Quét QR để tra cứu nhanh</p>
-    <img src="https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=https://zalo.me/g/fpccyz284" alt="QR Code">
             <p class="subtitle">
-                Đăng nhập bằng Số Căn Cước và mật khẩu lần đầu là mã nhân viên của bạn.
+                Mật khẩu lần đầu: Mã nhân viên của bạn. 
+                Bảo mật: Tuyệt đối không chia sẻ số Căn cước, mật khẩu và thông tin lương.
+                Bằng việc bấm nút ĐĂNG NHẬP, bạn đồng ý cho hệ thống ghi nhận dữ liệu để tra cứu lương.
             </p>
 
             <div
@@ -615,19 +615,27 @@ th {
 
             <form id="loginForm">
 
-                <div class="form-group">
+                <div class="form-group" style="position: relative;">
                     <label for="citizenID">
                         Số Căn cước
                     </label>
-
+                
+                    <!-- Đổi type="text" thành type="password" để mặc định ẩn số -->
                     <input
                         id="citizenID"
-                        type="text"
+                        type="password"
                         inputmode="numeric"
                         autocomplete="off"
                         maxlength="20"
-                        placeholder="Nhập số Căn Cước">
+                        placeholder="Nhập số Căn Cước"
+                        style="width: 100%; padding-right: 40px; box-sizing: border-box;">
+                    
+                    <!-- Nút con mắt ẩn/hiện nằm ở góc phải ô nhập liệu -->
+                    <span id="toggleCitizenID" style="position: absolute; right: 12px; bottom: 8px; cursor: pointer; user-select: none; font-size: 16px; z-index: 10;">
+                        👁️
+                    </span>
                 </div>
+
 
                 <div class="form-group">
                     <label for="password">
@@ -650,6 +658,13 @@ th {
 
             </form>
 
+            <div style="margin-top:12px;text-align:center;">
+                <button id="showForgotPasswordButton" type="button"
+                    class="btn btn-secondary">
+                    Quên mật khẩu?
+                </button>
+            </div>
+
             <div style="margin-top:18px;text-align:center;">
                 <button
                     id="showAdminLoginButton"
@@ -662,6 +677,69 @@ th {
     </div>
 
 </section>
+
+<section id="forgotPasswordView" class="hidden">
+    <div class="login-wrapper">
+        <div class="card">
+            <h2 class="section-title">Khôi phục mật khẩu</h2>
+            <p class="subtitle">
+                Nhập mã nhân viên và số điện thoại đã đăng ký trong hồ sơ nhân viên.
+                Nếu thông tin khớp, hệ thống sẽ gửi mã OTP qua SMS.
+            </p>
+            <div id="forgotPasswordAlert" class="alert hidden"></div>
+
+            <form id="requestResetOtpForm">
+                <div class="form-group">
+                    <label for="resetEmployeeCode">Mã nhân viên</label>
+                    <input id="resetEmployeeCode" type="text" autocomplete="off"
+                        maxlength="40" placeholder="Nhập mã nhân viên" required>
+                </div>
+                <div class="form-group">
+                    <label for="resetPhoneNumber">Số điện thoại đã đăng ký</label>
+                    <input id="resetPhoneNumber" type="tel" inputmode="numeric"
+                        autocomplete="tel" maxlength="20"
+                        placeholder="Ví dụ: 0901234567" required>
+                </div>
+                <button id="requestResetOtpButton" type="submit"
+                    class="btn btn-primary btn-full">Gửi mã OTP</button>
+            </form>
+
+            <div id="resetOtpPanel" class="hidden" style="margin-top:18px;">
+                <form id="verifyResetOtpForm">
+                    <div class="form-group">
+                        <label for="resetOtp">Mã OTP</label>
+                        <input id="resetOtp" type="text" inputmode="numeric"
+                            autocomplete="one-time-code" maxlength="10"
+                            placeholder="Nhập mã OTP nhận được" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="resetNewPassword">Mật khẩu mới</label>
+                        <input id="resetNewPassword" type="password"
+                            autocomplete="new-password" minlength="8"
+                            placeholder="Tối thiểu 8 ký tự" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="resetConfirmPassword">Xác nhận mật khẩu mới</label>
+                        <input id="resetConfirmPassword" type="password"
+                            autocomplete="new-password" minlength="8"
+                            placeholder="Nhập lại mật khẩu mới" required>
+                    </div>
+                    <button id="verifyResetOtpButton" type="submit"
+                        class="btn btn-primary btn-full">Xác nhận OTP và đổi mật khẩu</button>
+                </form>
+                <p class="subtitle" style="margin-top:12px;">
+                    OTP có hiệu lực 5 phút. Bạn có thể yêu cầu gửi lại sau 60 giây.
+                </p>
+            </div>
+
+            <div style="margin-top:18px;text-align:center;">
+                <button id="backFromForgotPasswordButton" type="button"
+                    class="btn btn-secondary">Quay lại đăng nhập</button>
+            </div>
+        </div>
+    </div>
+</section>
+
 
 <section
     id="changePasswordView"
@@ -1036,7 +1114,7 @@ th {
 'use strict';
 
 const API_URL =
-    'https://script.google.com/macros/s/AKfycbzenFqwhLeihHWWp00noO5EK3g_buYizFpnOaNVqiVO2EdhtI_KO-RzEkSUahMst0Vapw/exec';
+    'https://script.google.com/macros/s/AKfycbyW7OjW5OJhgaw8hiqSkelERGigCZ0mRWkGvPxkSlBFpGxUAO0rKY3H--co8fpxbYH8Fw/exec';
 
 const state = {
     employeeToken: '',
@@ -1044,7 +1122,8 @@ const state = {
     employee: null,
     payroll: null,
     employees: [],
-    resetEmployeeCode: ''
+    resetEmployeeCode: '',
+    resetChallengeId: ''
 };
 
 const elements = {
@@ -1053,6 +1132,9 @@ const elements = {
 
     changePasswordView:
         document.getElementById('changePasswordView'),
+
+    forgotPasswordView:
+        document.getElementById('forgotPasswordView'),
 
     employeeView:
         document.getElementById('employeeView'),
@@ -1091,6 +1173,18 @@ document
         'submit',
         handleEmployeeLogin
     );
+
+document.getElementById('showForgotPasswordButton')
+    .addEventListener('click', showForgotPassword);
+
+document.getElementById('backFromForgotPasswordButton')
+    .addEventListener('click', showEmployeeLogin);
+
+document.getElementById('requestResetOtpForm')
+    .addEventListener('submit', handleRequestResetOtp);
+
+document.getElementById('verifyResetOtpForm')
+    .addEventListener('submit', handleVerifyResetOtp);
 
 document
     .getElementById('changePasswordForm')
@@ -1263,17 +1357,6 @@ async function handleEmployeeLogin(event) {
         return;
     }
 
-    const normalizedCitizenID =
-        normalizeCitizenID(citizenID);
-
-    if (!normalizedCitizenID) {
-        showAlert(
-            elements.loginAlert,
-            'Số Căn Cước phải gồm đúng 12 chữ số.'
-        );
-        return;
-    }
-
     try {
         setLoading(
             true,
@@ -1285,7 +1368,9 @@ async function handleEmployeeLogin(event) {
                 'login',
                 {
                     citizenID:
-                        normalizedCitizenID,
+                        normalizeCitizenID(
+                            citizenID
+                        ),
                     password:
                         password
                 }
@@ -1938,6 +2023,112 @@ async function loadAuditLogs() {
     }
 }
 
+
+function showForgotPassword() {
+    hideAllViews();
+    elements.forgotPasswordView.classList.remove('hidden');
+    state.resetChallengeId = '';
+    document.getElementById('resetOtpPanel').classList.add('hidden');
+    document.getElementById('requestResetOtpForm').reset();
+    document.getElementById('verifyResetOtpForm').reset();
+    hideAlert(document.getElementById('forgotPasswordAlert'));
+}
+
+async function handleRequestResetOtp(event) {
+    event.preventDefault();
+    const alertBox = document.getElementById('forgotPasswordAlert');
+    hideAlert(alertBox);
+
+    const employeeCode = document.getElementById('resetEmployeeCode').value.trim();
+    const phoneRaw = document.getElementById('resetPhoneNumber').value.trim();
+    const phoneNumber = normalizePhoneNumberClient(phoneRaw);
+
+    if (!employeeCode || !phoneNumber) {
+        showAlert(alertBox, 'Vui lòng nhập mã nhân viên và số điện thoại hợp lệ gồm 10 chữ số.');
+        return;
+    }
+
+    try {
+        setLoading(true, 'Đang kiểm tra thông tin và gửi OTP...');
+        const result = await api('requestPasswordResetOtp', {
+            employeeCode: employeeCode,
+            phoneNumber: phoneNumber
+        });
+
+        if (!result.success) {
+            showAlert(alertBox, errorMessage(result.error));
+            return;
+        }
+
+        state.resetChallengeId = result.challengeId || '';
+        document.getElementById('resetOtpPanel').classList.remove('hidden');
+        showAlert(alertBox,
+            'Nếu thông tin khớp với hồ sơ, mã OTP đã được gửi qua SMS. Vui lòng kiểm tra điện thoại.');
+    } catch (error) {
+        showAlert(alertBox, errorMessage(error.message));
+    } finally {
+        setLoading(false);
+    }
+}
+
+async function handleVerifyResetOtp(event) {
+    event.preventDefault();
+    const alertBox = document.getElementById('forgotPasswordAlert');
+    hideAlert(alertBox);
+
+    const otp = document.getElementById('resetOtp').value.trim();
+    const newPassword = document.getElementById('resetNewPassword').value;
+    const confirmPassword = document.getElementById('resetConfirmPassword').value;
+
+    if (!state.resetChallengeId) {
+        showAlert(alertBox, 'Không tìm thấy yêu cầu OTP hợp lệ. Vui lòng kiểm tra thông tin và yêu cầu gửi mã mới.');
+        return;
+    }
+    if (!otp || !newPassword || !confirmPassword) {
+        showAlert(alertBox, 'Vui lòng nhập đầy đủ OTP và mật khẩu mới.');
+        return;
+    }
+    if (newPassword.length < 8) {
+        showAlert(alertBox, 'Mật khẩu mới phải có ít nhất 8 ký tự.');
+        return;
+    }
+    if (newPassword !== confirmPassword) {
+        showAlert(alertBox, 'Xác nhận mật khẩu không khớp.');
+        return;
+    }
+
+    try {
+        setLoading(true, 'Đang xác thực OTP và cập nhật mật khẩu...');
+        const result = await api('verifyPasswordResetOtp', {
+            challengeId: state.resetChallengeId,
+            otp: otp,
+            newPassword: newPassword,
+            confirmPassword: confirmPassword
+        });
+
+        if (!result.success) {
+            showAlert(alertBox, errorMessage(result.error));
+            return;
+        }
+
+        state.resetChallengeId = '';
+        document.getElementById('requestResetOtpForm').reset();
+        document.getElementById('verifyResetOtpForm').reset();
+        document.getElementById('resetOtpPanel').classList.add('hidden');
+        showAlert(alertBox, 'Đổi mật khẩu thành công. Bạn có thể quay lại đăng nhập bằng mật khẩu mới.');
+    } catch (error) {
+        showAlert(alertBox, errorMessage(error.message));
+    } finally {
+        setLoading(false);
+    }
+}
+
+function normalizePhoneNumberClient(value) {
+    let text = String(value || '').replace(/^'/, '').replace(/\D/g, '');
+    if (text.length === 9) text = '0' + text;
+    return /^0\d{9}$/.test(text) ? text : '';
+}
+
 function showEmployeeLogin() {
     hideAllViews();
 
@@ -1996,6 +2187,7 @@ function hideAllViews() {
     [
         elements.loginView,
         elements.changePasswordView,
+        elements.forgotPasswordView,
         elements.employeeView,
         elements.adminLoginView,
         elements.adminView
@@ -2508,6 +2700,23 @@ function errorMessage(error) {
         PASSWORD_MUST_BE_DIFFERENT:
             'Mật khẩu mới phải khác mật khẩu hiện tại.',
 
+        RESET_DETAILS_INVALID:
+            'Thông tin khôi phục không hợp lệ.',
+        OTP_PROVIDER_NOT_CONFIGURED:
+            'Chức năng OTP chưa được cấu hình. Vui lòng liên hệ Admin.',
+        OTP_SEND_FAILED:
+            'Chưa gửi được OTP. Vui lòng thử lại sau.',
+        OTP_RATE_LIMITED:
+            'Bạn vừa yêu cầu OTP. Vui lòng chờ 60 giây trước khi gửi lại.',
+        OTP_DAILY_LIMIT:
+            'Bạn đã đạt giới hạn 5 lần gửi OTP trong 6 giờ. Vui lòng thử lại sau.',
+        OTP_EXPIRED:
+            'Mã OTP đã hết hạn hoặc yêu cầu không còn hợp lệ. Vui lòng gửi mã mới.',
+        OTP_INVALID:
+            'Mã OTP không đúng. Vui lòng kiểm tra lại.',
+        OTP_TOO_MANY_ATTEMPTS:
+            'Bạn đã nhập sai OTP quá số lần cho phép. Vui lòng gửi mã mới.', 
+
         CURRENT_PASSWORD_INVALID:
             'Mật khẩu hiện tại không đúng.',
 
@@ -2541,12 +2750,15 @@ function normalizeCitizenID(value) {
             .replace(/^'/, '')
             .replace(/\s+/g, '');
 
-    if (/^\d+\.0+$/.test(text)) {
-        text = text.substring(0, text.indexOf('.'));
+    if (
+        /^\d+$/.test(text) &&
+        text.length < 12
+    ) {
+        text =
+            text.padStart(12, '0');
     }
 
-    // CCCD chi hop le khi dung 12 chu so. Khong tu dong them so 0.
-    return /^\d{12}$/.test(text) ? text : '';
+    return text;
 }
 
 function formatMoney(value) {
@@ -2592,6 +2804,25 @@ function escapeAttribute(value) {
         .replace(/\\/g, '\\\\')
         .replace(/'/g, "\\'");
 }
+
+document.addEventListener('DOMContentLoaded', function() {
+        const citizenInput = document.getElementById('citizenID');
+        const toggleBtn = document.getElementById('toggleCitizenID');
+
+        if (toggleBtn && citizenInput) {
+            toggleBtn.addEventListener('click', function () {
+                // Nếu đang ẩn (password) thì chuyển thành hiện (text)
+                if (citizenInput.type === 'password') {
+                    citizenInput.type = 'text';
+                    toggleBtn.textContent = '🙈'; // Đổi icon thành khỉ che mắt khi đang hiện số
+                } else {
+                    // Nếu đang hiện thì ẩn lại thành dấu chấm
+                    citizenInput.type = 'password';
+                    toggleBtn.textContent = '👁️'; // Đổi lại thành icon con mắt
+                }
+            });
+        }
+    });    
 </script>
 
 </body>
