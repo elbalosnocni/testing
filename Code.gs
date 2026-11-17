@@ -462,13 +462,29 @@ function requestPasswordResetOtp_(body) {
   }
 
   const employee = findEmployeeByEmployeeCode_(employeeCode);
-  // Use the same response for unknown employee / wrong phone to avoid account enumeration.
-  if (!employee || !employee.active || !employee.phoneNumber ||
-      employee.phoneNumber !== submittedPhone) {
-    writeAudit_(employeeCode, 'EMPLOYEE', 'PASSWORD_RESET_OTP_REJECTED',
-      employeeCode, '', 'Reset details did not match');
-    return { success: true, message: 'IF_MATCH_OTP_SENT' };
-  }
+
+// Chỉ cho phép quên mật khẩu nếu nhân viên đã đổi mật khẩu mặc định.
+if (
+  !employee ||
+  !employee.active ||
+  !employee.phoneNumber ||
+  employee.phoneNumber !== submittedPhone ||
+  employee.mustChangePassword === true
+) {
+  writeAudit_(
+    employeeCode,
+    'EMPLOYEE',
+    'PASSWORD_RESET_OTP_REJECTED',
+    employeeCode,
+    '',
+    'Employee inactive, phone mismatch or default password not changed'
+  );
+
+  return {
+    success: true,
+    message: 'IF_MATCH_OTP_SENT'
+  };
+}
 
   const cache = CacheService.getScriptCache();
   const throttleKey = 'pwd_otp_' + digestKey_(employeeCode.toUpperCase());
